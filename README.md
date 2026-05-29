@@ -74,7 +74,8 @@ You can trace your lot polygon directly from Google Maps and convert the corner 
 
 ### Example (from aerial measurement):
 
-The image below shows a sample irregular lot traced on Google Maps with segment distances labeled:
+The image below shows a sample irregular lot traced on Google Maps with segment distances labeled: <img width="460" height="463" alt="image" src="https://github.com/user-attachments/assets/657f77cb-b2da-42ce-8bbb-35a4603779c2" />
+
 
 > Segment distances visible: **2.29 km → 2.00 km → 0.50 km → 1.50 km → 1.00 km**
 
