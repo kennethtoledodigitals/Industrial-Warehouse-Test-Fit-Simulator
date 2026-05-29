@@ -1,0 +1,23 @@
+import pandas as pd
+from shapely.geometry import Polygon
+import geopandas as gpd
+
+# 1. Define your Google coordinates (Lat, Lon)
+coords = [
+    (14.2345, 121.1234),
+    (14.2355, 121.1234),
+    (14.2355, 121.1254),
+    (14.2345, 121.1254)
+]
+
+# 2. Create Shapely Polygon (Note: shapely expects x=Lon, y=Lat)
+poly = Polygon([(lon, lat) for lat, lon in coords])
+
+# 3. Convert to GeoDataFrame
+gdf = gpd.GeoDataFrame(index=[0], geometry=[poly], crs="EPSG:4326")
+
+# 4. Project to a flat metric coordinate system 
+# (EPSG:32651 is the UTM zone for Cavite/Philippines)
+gdf_projected = gdf.to_crs("EPSG:32651")
+
+print(gdf_projected.geometry[0]) # Prints the X,Y polygon coordinates in meters
