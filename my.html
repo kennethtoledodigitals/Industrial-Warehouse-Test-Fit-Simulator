@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Malaysia Industrial Simulator</title>
+<style>
+body { font-family:Arial; margin:0; display:flex; background:#0a0c0f; color:white; }
+#panel { width:300px; padding:15px; background:#111; }
+canvas { flex:1; background:#060810; }
+input,select,textarea{ width:100%; margin-bottom:8px; background:#000; color:#fff; border:1px solid #333;}
+button{ width:100%; padding:10px; background:#47c8ff; border:none; }
+h2{ color:#47c8ff; }
+</style>
+</head>
+
+<body>
+
+<div id="panel">
+<h2>🇲🇾 MY Simulator</h2>
+
+<label>Plot Ratio</label>
+<input id="pr" value="2.0">
+
+<label>Zone</label>
+<select id="zone">
+<option value="light">Light Industrial</option>
+<option value="medium">Medium Industrial</option>
+<option value="heavy">Heavy Industrial</option>
+</select>
+
+<label>Lot Coords</label>
+<textarea id="coords">0,0
+120,0
+120,80
+0,80</textarea>
+
+<label>Buildings</label>
+<input id="nB" value="2">
+
+<label>Storeys</label>
+<input id="nS" value="2">
+
+<button onclick="run()">Run</button>
+</div>
+
+<canvas id="cv"></canvas>
+
+<script>
+const ctx = cv.getContext("2d");
+
+function parse(){
+  return coords.value.trim().split("\n").map(l=>{
+    const [x,y]=l.split(',').map(Number);
+    return [x,y];
+  });
+}
+
+function area(p){
+  let a=0;
+  for(let i=0;i<p.length;i++){
+    let j=(i+1)%p.length;
+    a+=p[i][0]*p[j][1]-p[j][0]*p[i][1];
+  }
+  return Math.abs(a/2);
+}
+
+function bbox(p){
+  let xs=p.map(v=>v[0]), ys=p.map(v=>v[1]);
+  return {
+    minX:Math.min(...xs), maxX:Math.max(...xs),
+    minY:Math.min(...ys), maxY:Math.max(...ys)
+  };
+}
+
+function run(){
+
+  let pts=parse();
+  let b=bbox(pts);
+
+  let pr=+document.getElementById("pr").value;
+  let zone=document.getElementById("zone").value;
+
+  let coverage;
+  if(zone==="light") coverage=60;
+  else if(zone==="medium") coverage=70;
+  else coverage=80;
+
+  let lotArea=area(pts);
+  let maxGFA=lotArea*pr;
+
+  cv.width=window.innerWidth-300;
+  cv.height=window.innerHeight;
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  let scale=4;
+
+  // lot
+  ctx.beginPath();
+  pts.forEach((p,i)=>{
+    if(i==0) ctx.moveTo(p[0]*scale,p[1]*scale);
+    else ctx.lineTo(p[0]*scale,p[1]*scale);
+  });
+  ctx.closePath();
+  ctx.strokeStyle="#47c8ff";
+  ctx.stroke();
+
+  // buildings
+  let bw=(b.maxX-b.minX)/nB;
+
+  for(let i=0;i<nB;i++){
+    let x=b.minX+i*bw;
+    let y=b.minY;
+
+    ctx.fillStyle="#102a3a";
+    ctx.fillRect(x*scale,y*scale,bw*scale,30*scale);
+  }
+
+  // info
+  ctx.fillStyle="white";
+  ctx.fillText("Max GFA: "+maxGFA.toFixed(0),20,20);
+  ctx.fillText("Coverage limit: "+coverage+"%",20,40);
+}
+run();
+</script>
+
+</body>
+</html>
