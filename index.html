@@ -581,6 +581,1388 @@ function calcParking(whGFA, offGFA, stallArea){
   return{whPk,offPk,regTotal,handicap,moto,total,truckBays,carArea,hcArea,motoArea,truckArea,
          totalParkArea:(carArea+hcArea+motoArea)*1.4}; // ×1.4 for aisles
 }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Industrial Warehouse Test-Fit Simulator v3.0</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
+:root {
+  --bg:#0a0c0f; --panel:#12161c; --border:#1e2530;
+  --accent:#e8ff47; --accent2:#47c8ff; --accent3:#ff6b35;
+  --text:#c8d4e0; --text-dim:#5a6a7a;
+  --green:#3dff9a; --red:#ff4757; --amber:#ffb347; --purple:#b47fff;
+  --teal:#00e5cc; --pink:#ff47b0;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Space Mono',monospace;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;overflow-x:hidden;}
+header{border-bottom:1px solid var(--border);padding:9px 20px;display:flex;align-items:center;gap:14px;background:var(--panel);flex-shrink:0;flex-wrap:wrap;}
+.logo{font-family:'Barlow Condensed',sans-serif;font-weight:900;font-size:19px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;}
+.logo span{color:var(--text-dim);font-weight:300;}
+.tag{font-size:9px;letter-spacing:2px;color:var(--text-dim);border:1px solid var(--border);padding:2px 7px;text-transform:uppercase;}
+.main{display:grid;grid-template-columns:370px 1fr;flex:1;min-height:0;height:calc(100vh - 47px);}
+.left-panel{border-right:1px solid var(--border);overflow-y:auto;background:var(--panel);display:flex;flex-direction:column;}
+.section{border-bottom:1px solid var(--border);padding:12px 14px;}
+.stitle{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:9px;display:flex;align-items:center;gap:7px;}
+.stitle::before{content:'';width:3px;height:11px;background:var(--accent);display:block;flex-shrink:0;}
+textarea{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:11px;padding:7px;resize:vertical;min-height:90px;outline:none;transition:border-color .2s;line-height:1.6;}
+textarea:focus{border-color:var(--accent);}
+.hint{font-size:10px;color:var(--text-dim);margin-top:4px;line-height:1.5;}
+label{font-size:9px;color:var(--text-dim);display:block;margin-bottom:3px;letter-spacing:1px;text-transform:uppercase;}
+input[type=number],input[type=text],select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:11px;padding:5px 7px;outline:none;transition:border-color .2s;cursor:pointer;}
+input:focus,select:focus{border-color:var(--accent);}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;}
+.g4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:5px;margin-bottom:6px;}
+.mb6{margin-bottom:6px;}
+.btn{background:var(--accent);color:#0a0c0f;border:none;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:2px;text-transform:uppercase;padding:9px 14px;cursor:pointer;width:100%;transition:background .15s;}
+.btn:hover{background:#f5ff6e;}
+.btn-sm{background:transparent;border:1px solid var(--border);color:var(--text-dim);font-family:'Space Mono',monospace;font-size:9px;padding:4px 10px;cursor:pointer;transition:all .15s;letter-spacing:1px;text-transform:uppercase;}
+.btn-sm:hover{border-color:var(--accent2);color:var(--accent2);}
+.btn-copy{background:transparent;border:1px solid var(--accent2);color:var(--accent2);font-family:'Space Mono',monospace;font-size:9px;padding:4px 10px;cursor:pointer;transition:all .15s;letter-spacing:1px;text-transform:uppercase;}
+.btn-copy:hover{background:var(--accent2);color:#000;}
+.preset-btns{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+.preset-btn{font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:3px 8px;background:transparent;border:1px solid var(--border);color:var(--text-dim);cursor:pointer;transition:all .15s;}
+.preset-btn:hover{border-color:var(--accent);color:var(--accent);}
+.err{background:#2a1010;border:1px solid var(--red);color:var(--red);padding:7px 10px;font-size:10px;margin-bottom:8px;display:none;}
+.right-panel{display:flex;flex-direction:column;overflow:hidden;}
+.tabs{display:flex;border-bottom:1px solid var(--border);background:var(--panel);flex-shrink:0;flex-wrap:wrap;}
+.tab{font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;padding:9px 13px;cursor:pointer;color:var(--text-dim);border-bottom:2px solid transparent;transition:all .15s;border-right:1px solid var(--border);white-space:nowrap;}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);background:var(--bg);}
+.tab:hover:not(.active){color:var(--text);}
+.tab-content{flex:1;overflow:hidden;position:relative;}
+.tab-pane{display:none;width:100%;height:100%;position:absolute;top:0;left:0;}
+.tab-pane.active{display:flex;flex-direction:column;}
+canvas{flex:1;background:#060810;display:block;width:100%;}
+#canvas3d{cursor:grab;}#canvas3d:active{cursor:grabbing;}
+.toolbar{display:flex;gap:7px;padding:6px 11px;background:var(--panel);border-bottom:1px solid var(--border);align-items:center;flex-shrink:0;flex-wrap:wrap;}
+.ti{font-size:9px;color:var(--text-dim);margin-left:auto;letter-spacing:1px;}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:9px;color:var(--text-dim);align-items:center;}
+.ldot{width:9px;height:9px;flex-shrink:0;display:inline-block;vertical-align:middle;margin-right:2px;}
+.sp{padding:18px;overflow-y:auto;flex:1;}
+.cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:16px;}
+.cc{background:var(--panel);border:1px solid var(--border);padding:12px;position:relative;overflow:hidden;}
+.cc::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;}
+.cc.pass::before{background:var(--green);}.cc.fail::before{background:var(--red);}
+.cc.info::before{background:var(--accent2);}.cc.warn::before{background:var(--amber);}
+.cc.purple::before{background:var(--purple);}.cc.teal::before{background:var(--teal);}
+.cl{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:2px;}
+.cv{font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:700;line-height:1;}
+.cc.pass .cv{color:var(--green);}.cc.fail .cv{color:var(--red);}
+.cc.info .cv{color:var(--accent2);}.cc.warn .cv{color:var(--amber);}
+.cc.purple .cv{color:var(--purple);}.cc.teal .cv{color:var(--teal);}
+.cs{font-size:9px;color:var(--text-dim);margin-top:2px;}
+.cst{font-size:9px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-top:4px;}
+.cc.pass .cst{color:var(--green);}.cc.fail .cst{color:var(--red);}
+.tbl{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;}
+.tbl th{text-align:left;padding:6px 9px;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);background:var(--panel);border-bottom:1px solid var(--border);}
+.tbl td{padding:7px 9px;border-bottom:1px solid var(--border);vertical-align:top;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl .tot td{background:var(--panel);color:var(--accent);font-weight:700;border-top:1px solid var(--accent);border-bottom:none;}
+.ftag{display:inline-block;font-size:9px;padding:2px 5px;letter-spacing:1px;font-weight:700;}
+.f1{background:#1a2a3a;color:var(--accent2);}.f2{background:#2a1a3a;color:var(--purple);}
+.f3{background:#1a3a2a;color:var(--green);}.f4{background:#2a2a1a;color:var(--amber);}
+.sb{background:#0e1318;border:1px solid var(--border);padding:11px;margin-bottom:9px;}
+.sbt{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;}
+.subtitle{font-size:11px;color:var(--text-dim);margin-bottom:10px;}
+::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--border);}::-webkit-scrollbar-thumb:hover{background:var(--text-dim);}
+.ramp-note{font-size:9px;color:var(--amber);background:#1a1400;border:1px solid #3a3000;padding:5px 9px;margin-top:5px;line-height:1.6;}
+.pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:14px;}
+.pkc{background:var(--panel);border:1px solid var(--border);padding:11px;}
+.pkt{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:3px;}
+.pkv{font-family:'Barlow Condensed',sans-serif;font-size:22px;font-weight:700;color:var(--accent);}
+.pks{font-size:9px;color:var(--text-dim);margin-top:2px;}
+/* Coord Converter */
+.conv-box{background:#0a0e14;border:1px solid var(--border);padding:12px;margin-bottom:10px;}
+.conv-title{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent2);margin-bottom:8px;}
+.code-out{background:#060a0e;border:1px solid var(--border);color:var(--green);font-family:'Space Mono',monospace;font-size:10px;padding:10px;white-space:pre;overflow-x:auto;line-height:1.6;margin-top:8px;max-height:220px;overflow-y:auto;}
+.conv-tabs{display:flex;gap:0;margin-bottom:10px;border-bottom:1px solid var(--border);}
+.ctab{font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:5px 12px;cursor:pointer;color:var(--text-dim);border-bottom:2px solid transparent;transition:all .15s;}
+.ctab.active{color:var(--accent2);border-bottom-color:var(--accent2);}
+.badge{display:inline-block;font-size:8px;padding:1px 5px;letter-spacing:1px;font-weight:700;text-transform:uppercase;vertical-align:middle;}
+.badge-str{background:#2a1a08;color:#ff6b35;}
+.badge-cir{background:#1a0a2a;color:#b47fff;}
+.badge-cyl{background:#0a1a2a;color:#47c8ff;}
+.badge-none{background:#1a1a1a;color:#666;}
+.ramp-section{border:1px solid var(--border);padding:9px;margin-bottom:7px;background:#0b0f14;}
+.ramp-section-title{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.toggle{position:relative;width:32px;height:18px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#1e2530;transition:.2s;border-radius:9px;}
+.slider:before{position:absolute;content:'';height:12px;width:12px;left:3px;bottom:3px;background:#5a6a7a;transition:.2s;border-radius:50%;}
+input:checked+.slider{background:#1a3a1a;}
+input:checked+.slider:before{transform:translateX(14px);background:var(--green);}
+.toggle-label{font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">TESTFIT <span>//</span> WAREHOUSE</div>
+  <div class="tag">Design Simulator v3.0</div>
+  <div class="tag" style="color:var(--accent2);border-color:var(--accent2);">+ GeoDataFrame Export</div>
+</header>
+<div class="main">
+<!-- ══════════════ LEFT PANEL ══════════════ -->
+<div class="left-panel">
+
+  <div class="section">
+    <div class="stitle">Lot Polygon</div>
+    <textarea id="coordInput" rows="5" placeholder="0,0&#10;120,0&#10;120,80&#10;0,80"></textarea>
+    <div class="hint">One vertex per line: X,Y (meters). Min 3 pts.</div>
+    <div class="preset-btns">
+      <button class="preset-btn" onclick="loadPreset('rect')">Rectangle</button>
+      <button class="preset-btn" onclick="loadPreset('lshape')">L-Shape</button>
+      <button class="preset-btn" onclick="loadPreset('trap')">Trapezoid</button>
+      <button class="preset-btn" onclick="loadPreset('irr')">Irregular</button>
+      <button class="preset-btn" onclick="loadPreset('large')">Large Site</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="stitle">Setbacks (m)</div>
+    <div class="g4">
+      <div><label>Front</label><input type="number" id="sbF" value="6" min="0" step="0.5"></div>
+      <div><label>Rear</label><input type="number" id="sbR" value="3" min="0" step="0.5"></div>
+      <div><label>Left</label><input type="number" id="sbL" value="3" min="0" step="0.5"></div>
+      <div><label>Right</label><input type="number" id="sbRt" value="3" min="0" step="0.5"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="stitle">Building Config</div>
+    <div class="g2">
+      <div><label>No. of Buildings</label>
+        <select id="nB">
+          <option value="1">1 Building</option>
+          <option value="2">2 Buildings</option>
+          <option value="3" selected>3 Buildings</option>
+          <option value="4">4 Buildings</option>
+        </select>
+      </div>
+      <div><label>Storeys (1–4)</label>
+        <select id="nS">
+          <option value="1">1 Storey</option>
+          <option value="2" selected>2 Storeys</option>
+          <option value="3">3 Storeys</option>
+          <option value="4">4 Storeys</option>
+        </select>
+      </div>
+    </div>
+    <div class="g3">
+      <div><label>Floor Ht (m)</label><input type="number" id="fh" value="7" min="4" max="15" step="0.5"></div>
+      <div><label>Yard Width (m)</label><input type="number" id="yW" value="20" min="10" max="50" step="1"></div>
+      <div><label>BUAR</label><input type="number" id="buar" value="2.5" min="0.5" max="6" step="0.1"></div>
+    </div>
+    <div class="g2">
+      <div><label>Office Mezz % / Level</label><input type="number" id="offP" value="3" min="1" max="15" step="0.5"></div>
+      <div><label>Parking Stall W×L (m)</label>
+        <select id="stallSize">
+          <option value="12.5">2.5×5.0 (Standard)</option>
+          <option value="13.5">2.7×5.0 (Wide)</option>
+          <option value="14">2.8×5.0 (Comfort)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- RAMP SECTIONS -->
+  <div class="section">
+    <div class="stitle">Ramp Configuration</div>
+
+    <!-- Straight Ramp -->
+    <div class="ramp-section">
+      <div class="ramp-section-title">
+        <span class="badge badge-str">STR</span> Straight Ramp
+        <label class="toggle" style="margin-left:auto"><input type="checkbox" id="useStr" checked onchange="toggleRamp()"><span class="slider"></span></label>
+      </div>
+      <div id="strInputs">
+        <div class="g3">
+          <div><label>Width (m) ≥9</label><input type="number" id="srW" value="9" min="9" max="12" step="1"></div>
+          <div><label>Run Length (m)</label><input type="number" id="srL" value="84" min="36" max="144" step="6"></div>
+          <div><label>Slope</label><select id="srSlope"><option value="12">1:12</option><option value="10">1:10</option><option value="8">1:8</option></select></div>
+        </div>
+        <div class="ramp-note">Slope 1:12 → 1m rise per 12m run (8.33%). For 1 storey @7m: need 84m run. Width ≥9m (one-way) or 12m (2-way).</div>
+      </div>
+    </div>
+
+    <!-- Circular Ramp -->
+    <div class="ramp-section">
+      <div class="ramp-section-title">
+        <span class="badge badge-cir">CIR</span> Circular Ramp
+        <label class="toggle" style="margin-left:auto"><input type="checkbox" id="useCir" checked onchange="toggleRamp()"><span class="slider"></span></label>
+      </div>
+      <div id="cirInputs">
+        <div class="g3">
+          <div><label>Inner R (m) ≥8</label><input type="number" id="crIn" value="8" min="6" max="16" step="1"></div>
+          <div><label>Outer R (m) ≤18</label><input type="number" id="crOut" value="18" min="12" max="24" step="1"></div>
+          <div><label>Clear W (m)</label><input type="number" id="crW" value="9" min="9" max="12" step="0.5"></div>
+        </div>
+        <div class="g2">
+          <div><label>Slope</label><select id="crSlope"><option value="20" selected>1:20</option><option value="15">1:15</option><option value="12">1:12</option></select></div>
+          <div><label>Direction</label><select id="crDir"><option value="2way" selected>2-Way (18m CW)</option><option value="1way">1-Way</option></select></div>
+        </div>
+        <div class="ramp-note">Circular: slope 1:20 (5%). Inner R≥8m, Outer R≤18m, 18m clear width for 2-way traffic.</div>
+      </div>
+    </div>
+
+    <!-- Cylindrical Ramp -->
+    <div class="ramp-section">
+      <div class="ramp-section-title">
+        <span class="badge badge-cyl">CYL</span> Cylindrical / Spiral Ramp
+        <label class="toggle" style="margin-left:auto"><input type="checkbox" id="useCyl" onchange="toggleRamp()"><span class="slider"></span></label>
+      </div>
+      <div id="cylInputs" style="display:none">
+        <div class="g3">
+          <div><label>Core R (m)</label><input type="number" id="cylR" value="6" min="4" max="10" step="0.5"></div>
+          <div><label>Ramp Width (m)</label><input type="number" id="cylW" value="4" min="3" max="6" step="0.5"></div>
+          <div><label>Turns</label><input type="number" id="cylTurns" value="2" min="1" max="4" step="0.5"></div>
+        </div>
+        <div class="ramp-note">Cylindrical / helix ramp: compact vertical core. Outer R = Core R + Ramp W. Typically 1-way, slope ≤1:12 along helix path.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section">
+    <div class="stitle">Zoning Rules</div>
+    <div class="g2">
+      <div><label>Max Plinth %</label><input type="number" id="maxP" value="70" min="30" max="90"></div>
+      <div><label>Min Landscape %</label><input type="number" id="minL" value="10" min="5" max="40"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div id="errMsg" class="err"></div>
+    <button class="btn" onclick="runSim()">&#9654; RUN SIMULATION</button>
+  </div>
+
+</div>
+<!-- ══════════════ RIGHT PANEL ══════════════ -->
+<div class="right-panel">
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('plan2d')">2D Site Plan</div>
+    <div class="tab" onclick="switchTab('view3d')">3D Massing</div>
+    <div class="tab" onclick="switchTab('gfa')">GFA Breakdown</div>
+    <div class="tab" onclick="switchTab('parking')">Parking</div>
+    <div class="tab" onclick="switchTab('compliance')">Compliance</div>
+    <div class="tab" onclick="switchTab('geodata')">&#128205; GeoData Export</div>
+  </div>
+  <div class="tab-content">
+
+    <div id="pane-plan2d" class="tab-pane active">
+      <div class="toolbar">
+        <div class="legend">
+          <span><span class="ldot" style="background:#0d1e2e;border:1px solid #47c8ff"></span>Bldg</span>
+          <span><span class="ldot" style="background:#0c1e0c;border:1px solid #3dff9a"></span>Yard</span>
+          <span><span class="ldot" style="background:#200e00;border:1px solid #ff6b35"></span>Straight</span>
+          <span><span class="ldot" style="background:#1a0a2a;border:1px solid #b47fff"></span>Circular</span>
+          <span><span class="ldot" style="background:#0a1a2a;border:1px solid #47c8ff"></span>Cylindrical</span>
+          <span><span class="ldot" style="background:#1a1a0a;border:1px solid #ffb347"></span>Parking</span>
+        </div>
+        <div class="ti" id="scaleInfo">—</div>
+      </div>
+      <canvas id="canvas2d"></canvas>
+    </div>
+
+    <div id="pane-view3d" class="tab-pane">
+      <div class="toolbar">
+        <span style="font-size:9px;color:var(--text-dim)">&#128433; Drag rotate · Scroll zoom</span>
+        <div class="ti" id="info3d">Isometric</div>
+      </div>
+      <canvas id="canvas3d"
+        onmousedown="startDrag(event)" onmousemove="onDrag(event)"
+        onmouseup="endDrag()" onmouseleave="endDrag()" onwheel="onWheel(event)">
+      </canvas>
+    </div>
+
+    <div id="pane-gfa" class="tab-pane">
+      <div class="sp" id="gfaContent"><div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Run simulation first</div></div>
+    </div>
+
+    <div id="pane-parking" class="tab-pane">
+      <div class="sp" id="parkingContent"><div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Run simulation first</div></div>
+    </div>
+
+    <div id="pane-compliance" class="tab-pane">
+      <div class="sp" id="complianceContent"><div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Run simulation first</div></div>
+    </div>
+
+    <div id="pane-geodata" class="tab-pane">
+      <div class="sp" id="geodataContent">
+        <div style="display:flex;align-items:center;justify-content:center;height:200px;color:var(--text-dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Run simulation first</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+<script>
+// ══════════════════════════════════════════════════════════
+// GLOBALS
+// ══════════════════════════════════════════════════════════
+let R = null; // simResult
+let cam = { rotX:32, rotY:-42, zoom:1, dragging:false, lastX:0, lastY:0 };
+
+// ══════════════════════════════════════════════════════════
+// PRESETS
+// ══════════════════════════════════════════════════════════
+const PRESETS = {
+  rect:  "0,0\n120,0\n120,80\n0,80",
+  lshape:"0,0\n120,0\n120,50\n70,50\n70,110\n0,110",
+  trap:  "10,0\n130,0\n110,90\n0,90",
+  irr:   "0,20\n30,0\n110,10\n140,35\n130,110\n60,120\n0,80",
+  large: "0,0\n200,0\n200,150\n120,160\n0,150"
+};
+function loadPreset(k){ document.getElementById('coordInput').value=PRESETS[k]; runSim(); }
+
+// ══════════════════════════════════════════════════════════
+// RAMP TOGGLE
+// ══════════════════════════════════════════════════════════
+function toggleRamp(){
+  document.getElementById('strInputs').style.display = document.getElementById('useStr').checked ? 'block' : 'none';
+  document.getElementById('cirInputs').style.display = document.getElementById('useCir').checked ? 'block' : 'none';
+  document.getElementById('cylInputs').style.display = document.getElementById('useCyl').checked ? 'block' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════
+// GEOMETRY
+// ══════════════════════════════════════════════════════════
+function parseCoords(txt){
+  const lines=txt.trim().split('\n').map(l=>l.trim()).filter(Boolean);
+  const pts=lines.map(l=>{ const[x,y]=l.split(',').map(Number); if(isNaN(x)||isNaN(y)) throw new Error(`Bad point: "${l}"`); return[x,y]; });
+  if(pts.length<3) throw new Error('Need ≥ 3 points');
+  return pts;
+}
+function polyArea(pts){
+  let a=0;const n=pts.length;
+  for(let i=0;i<n;i++){const j=(i+1)%n;a+=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1];}
+  return Math.abs(a)/2;
+}
+function bbox(pts){
+  const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
+}
+
+// ══════════════════════════════════════════════════════════
+// RAMP AREA CALCS
+// ══════════════════════════════════════════════════════════
+// Straight: simple rectangle footprint
+function strRampArea(w,l){ return w*l; }
+// Circular: annulus footprint π(R_out² - R_in²)
+function cirRampArea(rIn,rOut){ return Math.PI*(rOut*rOut - rIn*rIn); }
+// Cylindrical/helix: annulus of (coreR + rampW)² - coreR²
+function cylRampArea(coreR,rampW){ return Math.PI*((coreR+rampW)*(coreR+rampW) - coreR*coreR); }
+
+// ══════════════════════════════════════════════════════════
+// PARKING
+// ══════════════════════════════════════════════════════════
+function calcParking(whGFA, offGFA, stallArea){
+  // Warehouse: 1 per first 1400m², then 1 per 232.2m² remainder
+  let whPk = whGFA>0 ? 1 + Math.ceil(Math.max(0,whGFA-1400)/232.2) : 0;
+  // Office: 1 per 46.4m²
+  let offPk = Math.ceil(offGFA/46.4);
+  let regTotal = whPk + offPk;
+  // Handicap: max(2, 2% of total regular)
+  let handicap = Math.max(2, Math.ceil(regTotal*0.02));
+  // Motorcycle: 1 per 185.8m² total GFA
+  let moto = Math.ceil((whGFA+offGFA)/185.8);
+  let total = regTotal + handicap + moto;
+  // Truck bays: 1 per 900m² WH GFA
+  let truckBays = Math.max(1, Math.ceil(whGFA/900));
+  // Area estimates
+  let carArea = regTotal * stallArea;
+  let hcArea  = handicap * 18.5;
+  let motoArea= moto * 2;
+  let truckArea= truckBays * 72; // 4×18m
+  return{whPk,offPk,regTotal,handicap,moto,total,truckBays,carArea,hcArea,motoArea,truckArea,
+         totalParkArea:(carArea+hcArea+motoArea)*1.4}; // ×1.4 for aisles
+}
+
+// ══════════════════════════════════════════════════════════
+// SIMULATE
+// ══════════════════════════════════════════════════════════
+function runSim(){
+  const errEl=document.getElementById('errMsg');
+  errEl.style.display='none';
+  let pts;
+  try{ pts=parseCoords(document.getElementById('coordInput').value); }
+  catch(e){ errEl.textContent='⚠ '+e.message; errEl.style.display='block'; return; }
+
+  // Inputs
+  const sbF=+document.getElementById('sbF').value;
+  const sbR=+document.getElementById('sbR').value;
+  const sbL=+document.getElementById('sbL').value;
+  const sbRt=+document.getElementById('sbRt').value;
+  const nBldgs=+document.getElementById('nB').value;
+  const nStor=+document.getElementById('nS').value;
+  const fh=+document.getElementById('fh').value;
+  const yW=+document.getElementById('yW').value;
+  const buar=+document.getElementById('buar').value;
+  const offPct=+document.getElementById('offP').value/100;
+  const stallArea=+document.getElementById('stallSize').value;
+  const maxP=+document.getElementById('maxP').value;
+  const minL=+document.getElementById('minL').value;
+
+  // Ramp flags & params
+  const useStr=document.getElementById('useStr').checked && nStor>1;
+  const useCir=document.getElementById('useCir').checked && nStor>1;
+  const useCyl=document.getElementById('useCyl').checked && nStor>1;
+  const srW=+document.getElementById('srW').value;
+  const srL=+document.getElementById('srL').value;
+  const srSlope=+document.getElementById('srSlope').value;
+  const crIn=+document.getElementById('crIn').value;
+  const crOut=+document.getElementById('crOut').value;
+  const crW=+document.getElementById('crW').value;
+  const crSlope=+document.getElementById('crSlope').value;
+  const crDir=document.getElementById('crDir').value;
+  const cylR=+document.getElementById('cylR').value;
+  const cylW=+document.getElementById('cylW').value;
+  const cylTurns=+document.getElementById('cylTurns').value;
+
+  const lotArea=polyArea(pts);
+  const b=bbox(pts);
+  const bzMinX=b.minX+sbL, bzMaxX=b.maxX-sbRt;
+  const bzMinY=b.minY+sbF, bzMaxY=b.maxY-sbR;
+  const bzW=Math.max(0,bzMaxX-bzMinX);
+  const bzH=Math.max(0,bzMaxY-bzMinY);
+
+  if(bzW<=0||bzH<=0){
+    errEl.textContent='⚠ Setbacks exceed lot dimensions. Reduce setbacks.';
+    errEl.style.display='block'; return;
+  }
+
+  const maxGFA = lotArea*buar;
+
+  // ── RAMP FOOTPRINTS ──────────────────────────────────────
+  // Reserve right side for circular/cylindrical ramps
+  const crDiam = useCir ? crOut*2 : 0;
+  const cylDiam = useCyl ? (cylR+cylW)*2 : 0;
+  const rampReserveW = Math.max(crDiam, cylDiam) + (crDiam>0||cylDiam>0 ? 4 : 0);
+
+  // Straight ramp footprint per building (placed at yard/ramp access side)
+  const srFootprint = useStr ? strRampArea(srW, srL) : 0;
+  const crFootprint = useCir ? cirRampArea(crIn,crOut) : 0;
+  const cylFootprint= useCyl ? cylRampArea(cylR,cylW) : 0;
+
+  // ── BUILDING LAYOUT ──────────────────────────────────────
+  // Effective buildable width excluding rotary ramp pad
+  const effW = Math.max(10, bzW - rampReserveW);
+  // Height split: allocate yard zones between building pairs
+  const nYards = Math.floor(nBldgs/2);
+  const totalYardH = nYards * yW;
+  const availH = bzH - totalYardH;
+  const bH = Math.max(8, availH / nBldgs);
+
+  const buildings = [];
+  const yards = [];
+  const sramps = []; // straight ramps per building
+
+  const BCOLS  = ['#47c8ff','#b47fff','#3dff9a','#ffb347'];
+  const BFILLS = ['#0d1e2e','#1a0d2e','#0d2010','#2a1a08'];
+
+  for(let i=0;i<nBldgs;i++){
+    const pairIdx=Math.floor(i/2);
+    const yOff = i*bH + pairIdx*yW;
+    const bx=bzMinX, by=bzMinY+yOff;
+    const bw=effW, bh=bH;
+    const fp = bw*bh;
+    const whGFApF = fp;
+    const offGFApF = fp*offPct;
+    const totGFApF = whGFApF+offGFApF;
+
+    // Straight ramp per building (at bottom of each building toward yard)
+    let sr=null;
+    if(useStr){
+      sr={
+        x:bx, y:by+bh-Math.min(srL,bh*0.7),
+        w:srW, h:Math.min(srL,bh*0.7),
+        slopeStr:`1:${srSlope}`, slopePct:(100/srSlope).toFixed(1)
+      };
+      sramps.push(sr);
+    }
+
+    // Yard between building pairs
+    if(i%2===0 && i+1<nBldgs){
+      yards.push({x:bzMinX,y:bzMinY+yOff+bH,w:effW,h:yW,label:`Truck Yard ${pairIdx+1}`});
+    }
+
+    buildings.push({
+      id:i+1, x:bx, y:by, w:bw, h:bh, storeys:nStor, fh,
+      fp, whGFApF, offGFApF, totGFApF,
+      whGFA:whGFApF*nStor, offGFA:offGFApF*nStor, totGFA:totGFApF*nStor,
+      sr, ci:i%4
+    });
+  }
+
+  // Circular ramp position (right side of buildable zone)
+  let circRamp=null;
+  if(useCir){
+    const cx2=bzMinX+effW+4+crOut;
+    const cy2=bzMinY+bzH/2;
+    circRamp={type:'circular',cx:cx2,cy:cy2,innerR:crIn,outerR:crOut,clearW:crW,
+      slope:`1:${crSlope}`,dir:crDir,footprint:crFootprint};
+  }
+
+  // Cylindrical ramp position (right side, offset from circular)
+  let cylRamp=null;
+  if(useCyl){
+    const offset = useCir ? crOut*2+4 : 0;
+    const cx3=bzMinX+effW+4+(cylR+cylW)+offset;
+    const cy3=bzMinY+bzH*0.25;
+    cylRamp={type:'cylindrical',cx:cx3,cy:cy3,coreR:cylR,rampW:cylW,turns:cylTurns,
+      outerR:cylR+cylW,footprint:cylFootprint};
+  }
+
+  // ── TOTALS ────────────────────────────────────────────────
+  const totWhGFA  = buildings.reduce((s,b)=>s+b.whGFA,0);
+  const totOffGFA = buildings.reduce((s,b)=>s+b.offGFA,0);
+  const totGFA    = buildings.reduce((s,b)=>s+b.totGFA,0);
+  const totFP     = buildings.reduce((s,b)=>s+b.fp,0);
+  const totYard   = yards.reduce((s,y)=>s+(y.w*y.h),0);
+  const totStrRamp= sramps.reduce((s,r)=>s+(r.w*r.h),0);
+  const totRamp   = totStrRamp + crFootprint + cylFootprint;
+  const totPlinth = totFP + totYard + totRamp;
+  const plinthPct =(totPlinth/lotArea)*100;
+  const lscArea   = Math.max(0, lotArea-totPlinth);
+  const lscPct    =(lscArea/lotArea)*100;
+  const buarActual= totGFA/lotArea;
+
+  const parking   = calcParking(totWhGFA, totOffGFA, stallArea);
+
+  R={
+    pts, b, bzMinX, bzMaxX, bzMinY, bzMaxY, bzW, bzH,
+    buildings, yards, sramps, circRamp, cylRamp,
+    lotArea, maxGFA, buar, buarActual,
+    totWhGFA, totOffGFA, totGFA,
+    totFP, totYard, totRamp, totStrRamp, crFootprint, cylFootprint,
+    totPlinth, plinthPct, lscArea, lscPct,
+    maxP, minL, nStor, fh, nBldgs, yW, stallArea,
+    useStr, useCir, useCyl, srW, srL, srSlope,
+    crIn, crOut, crW, crSlope, crDir,
+    cylR, cylW, cylTurns,
+    parking
+  };
+
+  draw2D(); draw3D(); renderGFA(); renderParking(); renderCompliance(); renderGeoData();
+}
+
+// ══════════════════════════════════════════════════════════
+// 2D CANVAS
+// ══════════════════════════════════════════════════════════
+function draw2D(){
+  if(!R) return;
+  const cv=document.getElementById('canvas2d');
+  cv.width=cv.parentElement.clientWidth;
+  cv.height=cv.parentElement.clientHeight;
+  const ctx=cv.getContext('2d');
+  const{pts,bzMinX,bzMaxX,bzMinY,bzMaxY,buildings,yards,sramps,circRamp,cylRamp}=R;
+  const b=bbox(pts);
+  const pad=52;
+  const sc=Math.min((cv.width-pad*2)/(b.maxX-b.minX),(cv.height-pad*2)/(b.maxY-b.minY));
+  const ox=pad+(cv.width-pad*2-(b.maxX-b.minX)*sc)/2-b.minX*sc;
+  const oy=pad+(cv.height-pad*2-(b.maxY-b.minY)*sc)/2-b.minY*sc;
+  const tx=x=>ox+x*sc, ty=y=>oy+y*sc, sw=v=>v*sc;
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  // Grid
+  ctx.strokeStyle='#0d1420'; ctx.lineWidth=1;
+  for(let gx=Math.floor(b.minX/10)*10;gx<=b.maxX+10;gx+=10){ctx.beginPath();ctx.moveTo(tx(gx),0);ctx.lineTo(tx(gx),cv.height);ctx.stroke();}
+  for(let gy=Math.floor(b.minY/10)*10;gy<=b.maxY+10;gy+=10){ctx.beginPath();ctx.moveTo(0,ty(gy));ctx.lineTo(cv.width,ty(gy));ctx.stroke();}
+
+  // Lot fill
+  ctx.beginPath();
+  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
+  ctx.closePath(); ctx.fillStyle='#0b1522'; ctx.fill();
+
+  // Setback zone dashed
+  ctx.beginPath();
+  ctx.rect(tx(bzMinX),ty(bzMinY),sw(bzMaxX-bzMinX),sw(bzMaxY-bzMinY));
+  ctx.strokeStyle='#1e3a1e'; ctx.setLineDash([4,4]); ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
+
+  // Yards
+  yards.forEach(y=>{
+    ctx.fillStyle='#0c1e0c'; ctx.fillRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
+    ctx.strokeStyle='#3dff9a'; ctx.lineWidth=1; ctx.strokeRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
+    if(sw(y.h)>14){
+      ctx.fillStyle='#3dff9a'; ctx.font=`bold ${Math.max(8,sw(2))}px Barlow Condensed`;
+      ctx.textAlign='center'; ctx.fillText(y.label,tx(y.x+y.w/2),ty(y.y+y.h/2)+4);
+    }
+  });
+
+  // ── Straight ramps ──
+  sramps.forEach(r=>{
+    ctx.fillStyle='#1f0d00'; ctx.fillRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
+    ctx.strokeStyle='#ff6b35'; ctx.lineWidth=1.2; ctx.strokeRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
+    ctx.strokeStyle='rgba(255,107,53,0.25)'; ctx.lineWidth=0.5;
+    for(let ri=0;ri<r.h;ri+=2.5){ctx.beginPath();ctx.moveTo(tx(r.x),ty(r.y+ri));ctx.lineTo(tx(r.x+r.w),ty(r.y+ri));ctx.stroke();}
+    if(sw(r.h)>18){
+      ctx.fillStyle='#ff6b35'; ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;
+      ctx.textAlign='center'; ctx.fillText(`STR ${r.slopeStr}`,tx(r.x+r.w/2),ty(r.y+r.h/2)+3);
+    }
+  });
+
+  // ── Circular ramp (annulus) ──
+  if(circRamp){
+    const cpx=tx(circRamp.cx),cpy=ty(circRamp.cy);
+    const rIn=sw(circRamp.innerR), rOut=sw(circRamp.outerR);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cpx,cpy,rOut,0,Math.PI*2,false);
+    ctx.arc(cpx,cpy,rIn,0,Math.PI*2,true);
+    ctx.fillStyle='#1a0a2e'; ctx.fill();
+    ctx.strokeStyle='#b47fff'; ctx.lineWidth=1.5; ctx.stroke();
+    // spiral suggestion lines
+    for(let a=0;a<Math.PI*2;a+=Math.PI/6){
+      ctx.beginPath();
+      ctx.moveTo(cpx+Math.cos(a)*rIn,cpy+Math.sin(a)*rIn);
+      ctx.lineTo(cpx+Math.cos(a)*rOut,cpy+Math.sin(a)*rOut);
+      ctx.strokeStyle='rgba(180,127,255,0.2)'; ctx.lineWidth=0.5; ctx.stroke();
+    }
+    ctx.beginPath();ctx.arc(cpx,cpy,rIn,0,Math.PI*2);ctx.strokeStyle='rgba(180,127,255,0.4)';ctx.lineWidth=0.8;ctx.stroke();
+    ctx.fillStyle='#b47fff'; ctx.font=`bold ${Math.max(8,sw(1.8))}px Barlow Condensed`;
+    ctx.textAlign='center'; ctx.fillText('CIR',cpx,cpy-4);
+    ctx.font=`${Math.max(7,sw(1.4))}px Space Mono`; ctx.fillText(circRamp.slope,cpx,cpy+9);
+    // dim labels
+    ctx.fillStyle='rgba(180,127,255,0.6)'; ctx.font=`${Math.max(7,sw(1.2))}px Space Mono`;
+    ctx.textAlign='left';
+    ctx.fillText(`R${circRamp.innerR}`,cpx+rIn+2,cpy);
+    ctx.fillText(`R${circRamp.outerR}`,cpx+rOut+2,cpy+10);
+    ctx.restore();
+  }
+
+  // ── Cylindrical ramp ──
+  if(cylRamp){
+    const cpx=tx(cylRamp.cx),cpy=ty(cylRamp.cy);
+    const rCore=sw(cylRamp.coreR), rOuter=sw(cylRamp.outerR);
+    ctx.save();
+    // outer ring
+    ctx.beginPath();ctx.arc(cpx,cpy,rOuter,0,Math.PI*2,false);
+    ctx.arc(cpx,cpy,rCore,0,Math.PI*2,true);
+    ctx.fillStyle='#0a1e2e'; ctx.fill();
+    ctx.strokeStyle='#47c8ff'; ctx.lineWidth=1.5; ctx.stroke();
+    // helix dots
+    for(let t=0;t<cylRamp.turns*Math.PI*2;t+=0.4){
+      const r=rCore+(rOuter-rCore)*0.5;
+      ctx.beginPath();ctx.arc(cpx+Math.cos(t)*r,cpy+Math.sin(t)*r,1.5,0,Math.PI*2);
+      ctx.fillStyle='rgba(71,200,255,0.5)';ctx.fill();
+    }
+    // core
+    ctx.beginPath();ctx.arc(cpx,cpy,rCore,0,Math.PI*2);ctx.strokeStyle='rgba(71,200,255,0.3)';ctx.lineWidth=0.8;ctx.stroke();
+    ctx.fillStyle='#47c8ff'; ctx.font=`bold ${Math.max(8,sw(1.8))}px Barlow Condensed`;
+    ctx.textAlign='center'; ctx.fillText('CYL',cpx,cpy-4);
+    ctx.font=`${Math.max(7,sw(1.3))}px Space Mono`; ctx.fillText(`${cylRamp.turns}T`,cpx,cpy+9);
+    ctx.restore();
+  }
+
+  // ── Buildings ──
+  const BCOL=['#47c8ff','#b47fff','#3dff9a','#ffb347'];
+  const BFIL=['#0d1e2e','#1a0d2e','#0d2010','#2a1a08'];
+  buildings.forEach(bldg=>{
+    const ci=bldg.ci;
+    ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fillRect(tx(bldg.x)+3,ty(bldg.y)+3,sw(bldg.w),sw(bldg.h));
+    ctx.fillStyle=BFIL[ci]; ctx.fillRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
+    ctx.strokeStyle=BCOL[ci]; ctx.lineWidth=1.5; ctx.strokeRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
+    // floor lines
+    for(let f=1;f<bldg.storeys;f++){
+      const ly=ty(bldg.y)+(f/bldg.storeys)*sw(bldg.h);
+      ctx.beginPath();ctx.moveTo(tx(bldg.x),ly);ctx.lineTo(tx(bldg.x+bldg.w),ly);
+      ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.lineWidth=0.5;ctx.stroke();
+    }
+    // label
+    ctx.fillStyle=BCOL[ci]; ctx.font=`bold ${Math.max(9,sw(2.5))}px Barlow Condensed`;
+    ctx.textAlign='center';
+    ctx.fillText(`BLDG ${bldg.id} · ${bldg.storeys}F`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)-7);
+    ctx.font=`${Math.max(7,sw(1.5))}px Space Mono`; ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.fillText(`${bldg.fp.toFixed(0)}m²/flr`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)+6);
+    ctx.fillText(`GFA ${bldg.totGFA.toFixed(0)}m²`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)+19);
+  });
+
+  // Lot outline
+  ctx.beginPath();
+  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
+  ctx.closePath(); ctx.strokeStyle='#e8ff47'; ctx.lineWidth=2; ctx.stroke();
+  pts.forEach(p=>{
+    ctx.fillStyle='#e8ff47'; ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(232,255,71,0.55)'; ctx.font='9px Space Mono'; ctx.textAlign='left';
+    ctx.fillText(`(${p[0]},${p[1]})`,tx(p[0])+5,ty(p[1])-4);
+  });
+
+  // Scale bar
+  const sm=10,spx=sm*sc,sx=20,sy=cv.height-20;
+  ctx.strokeStyle='#e8ff47'; ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+spx,sy);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sx,sy-4);ctx.lineTo(sx,sy+4);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sx+spx,sy-4);ctx.lineTo(sx+spx,sy+4);ctx.stroke();
+  ctx.fillStyle='#e8ff47'; ctx.font='10px Space Mono'; ctx.textAlign='center';
+  ctx.fillText(`${sm}m`,sx+spx/2,sy-7);
+
+  document.getElementById('scaleInfo').textContent=
+    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)}`;
+}
+
+// ══════════════════════════════════════════════════════════
+// 3D CANVAS
+// ══════════════════════════════════════════════════════════
+function draw3D(){
+  if(!R) return;
+  const cv=document.getElementById('canvas3d');
+  cv.width=cv.parentElement.clientWidth;
+  cv.height=cv.parentElement.clientHeight;
+  const ctx=cv.getContext('2d');
+  const{pts,bzMinX,bzMaxX,bzMinY,bzMaxY,buildings,yards,sramps,circRamp,cylRamp,nStor,fh}=R;
+  const b=bbox(pts);
+  const cxw=(b.minX+b.maxX)/2,cyw=(b.minY+b.maxY)/2;
+  const maxD=Math.max(b.maxX-b.minX,b.maxY-b.minY,nStor*fh);
+  const bsc=Math.min(cv.width,cv.height)/(maxD*2.6)*cam.zoom;
+  ctx.clearRect(0,0,cv.width,cv.height);
+
+  const rX=cam.rotX*Math.PI/180, rY=cam.rotY*Math.PI/180;
+  function proj(wx,wy,wz){
+    const rx=wx-cxw,ry=wy-cyw,rz=wz;
+    const rx2=rx*Math.cos(rY)-ry*Math.sin(rY);
+    const ry2=rx*Math.sin(rY)+ry*Math.cos(rY);
+    const ry3=ry2*Math.cos(rX)-rz*Math.sin(rX);
+    const rz3=ry2*Math.sin(rX)+rz*Math.cos(rX);
+    return[cv.width/2+rx2*bsc, cv.height/2-rz3*bsc];
+  }
+  function face(verts,fill,stroke,lw){
+    if(verts.length<3) return;
+    ctx.beginPath();ctx.moveTo(...verts[0]);verts.slice(1).forEach(v=>ctx.lineTo(...v));ctx.closePath();
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw||1;ctx.stroke();}
+  }
+  function box3d(x,y,w,h,ht,topC,s1,s2,edge){
+    if(w<=0||h<=0||ht<=0) return;
+    const x2=x+w,y2=y+h;
+    const TL0=proj(x,y,0),TR0=proj(x2,y,0),BL0=proj(x,y2,0),BR0=proj(x2,y2,0);
+    const TL1=proj(x,y,ht),TR1=proj(x2,y,ht),BL1=proj(x,y2,ht),BR1=proj(x2,y2,ht);
+    face([TL0,TR0,TR1,TL1],s1,edge);
+    face([BL0,TL0,TL1,BL1],s2,edge);
+    face([TR0,BR0,BR1,TR1],s2,edge);
+    face([BL0,BR0,BR1,BL1],s1,edge);
+    face([TL1,TR1,BR1,BL1],topC,edge,1.5);
+  }
+
+  // Ground
+  const lv=pts.map(p=>proj(p[0],p[1],0));
+  ctx.beginPath();lv.forEach((v,i)=>i===0?ctx.moveTo(...v):ctx.lineTo(...v));
+  ctx.closePath();ctx.fillStyle='#0a1018';ctx.fill();ctx.strokeStyle='#e8ff47';ctx.lineWidth=1.5;ctx.stroke();
+
+  // Buildable slab
+  face([proj(bzMinX,bzMinY,.1),proj(bzMaxX,bzMinY,.1),proj(bzMaxX,bzMaxY,.1),proj(bzMinX,bzMaxY,.1)],'#0c1a0c','#1e3a1e');
+
+  // Yards
+  yards.forEach(y=>{
+    face([proj(y.x,y.y,0.5),proj(y.x+y.w,y.y,0.5),proj(y.x+y.w,y.y+y.h,0.5),proj(y.x,y.y+y.h,0.5)],'#0f2a10','#3dff9a');
+  });
+
+  // Straight ramps 3D
+  sramps.forEach(r=>{
+    box3d(r.x,r.y,r.w,r.h,fh*0.25,'#3a2010','#2a1a08','#1a1005','#ff6b35');
+  });
+
+  // Circular ramp 3D (spiral)
+  if(circRamp){
+    const steps=40;
+    const totalH=fh*nStor;
+    for(let i=0;i<steps;i++){
+      const a1=(i/steps)*2*Math.PI, a2=((i+1)/steps)*2*Math.PI;
+      const z1=(i/steps)*totalH, z2=((i+1)/steps)*totalH;
+      const cx=circRamp.cx,cy=circRamp.cy,rI=circRamp.innerR,rO=circRamp.outerR;
+      const p1=proj(cx+Math.cos(a1)*rI,cy+Math.sin(a1)*rI,z1);
+      const p2=proj(cx+Math.cos(a2)*rI,cy+Math.sin(a2)*rI,z2);
+      const p3=proj(cx+Math.cos(a2)*rO,cy+Math.sin(a2)*rO,z2);
+      const p4=proj(cx+Math.cos(a1)*rO,cy+Math.sin(a1)*rO,z1);
+      face([p1,p2,p3,p4],`rgba(${80+i*3},30,${140+i*3},0.85)`,'#b47fff',0.4);
+    }
+    const tp=proj(circRamp.cx,circRamp.cy,totalH+3);
+    ctx.fillStyle='#b47fff';ctx.font='bold 10px Barlow Condensed';ctx.textAlign='center';
+    ctx.fillText('CIRC RAMP',...tp);
+  }
+
+  // Cylindrical ramp 3D (helix)
+  if(cylRamp){
+    const totalH=fh*nStor;
+    const segs=cylRamp.turns*32;
+    for(let i=0;i<segs;i++){
+      const t1=(i/segs)*cylRamp.turns*2*Math.PI;
+      const t2=((i+1)/segs)*cylRamp.turns*2*Math.PI;
+      const z1=(i/segs)*totalH, z2=((i+1)/segs)*totalH;
+      const cx=cylRamp.cx,cy=cylRamp.cy,rI=cylRamp.coreR,rO=cylRamp.outerR;
+      const p1=proj(cx+Math.cos(t1)*rI,cy+Math.sin(t1)*rI,z1);
+      const p2=proj(cx+Math.cos(t2)*rI,cy+Math.sin(t2)*rI,z2);
+      const p3=proj(cx+Math.cos(t2)*rO,cy+Math.sin(t2)*rO,z2);
+      const p4=proj(cx+Math.cos(t1)*rO,cy+Math.sin(t1)*rO,z1);
+      face([p1,p2,p3,p4],`rgba(20,${80+i*2},${140+i*2},0.85)`,'#47c8ff',0.4);
+    }
+    // Core cylinder
+    const csteps=20;
+    for(let i=0;i<csteps;i++){
+      const a1=(i/csteps)*2*Math.PI,a2=((i+1)/csteps)*2*Math.PI;
+      const cx=cylRamp.cx,cy=cylRamp.cy,r=cylRamp.coreR;
+      face([proj(cx+Math.cos(a1)*r,cy+Math.sin(a1)*r,0),proj(cx+Math.cos(a2)*r,cy+Math.sin(a2)*r,0),
+            proj(cx+Math.cos(a2)*r,cy+Math.sin(a2)*r,fh*nStor),proj(cx+Math.cos(a1)*r,cy+Math.sin(a1)*r,fh*nStor)],
+           'rgba(10,30,50,0.6)','#47c8ff',0.3);
+    }
+    const tp=proj(cylRamp.cx,cylRamp.cy,fh*nStor+3);
+    ctx.fillStyle='#47c8ff';ctx.font='bold 10px Barlow Condensed';ctx.textAlign='center';
+    ctx.fillText('CYL RAMP',...tp);
+  }
+
+  // Buildings 3D
+  const BTC=['#1a4060','#2a1a50','#0d3020','#302010'];
+  const BS1=['#0d2a40','#1a0d38','#082010','#201508'];
+  const BS2=['#081a28','#100820','#051008','#100a04'];
+  const BED=['#47c8ff','#b47fff','#3dff9a','#ffb347'];
+
+  buildings.forEach(bldg=>{
+    const ci=bldg.ci;
+    const totalH=bldg.storeys*bldg.fh;
+    box3d(bldg.x,bldg.y,bldg.w,bldg.h,totalH,BTC[ci],BS1[ci],BS2[ci],BED[ci]);
+    for(let fl=1;fl<bldg.storeys;fl++){
+      const fz=fl*bldg.fh;
+      const fv=[proj(bldg.x,bldg.y,fz),proj(bldg.x+bldg.w,bldg.y,fz),
+                proj(bldg.x+bldg.w,bldg.y+bldg.h,fz),proj(bldg.x,bldg.y+bldg.h,fz)];
+      ctx.beginPath();fv.forEach((v,i)=>i===0?ctx.moveTo(...v):ctx.lineTo(...v));
+      ctx.closePath();ctx.strokeStyle='rgba(255,255,255,0.07)';ctx.lineWidth=0.5;ctx.stroke();
+    }
+    const tc=proj(bldg.x+bldg.w/2,bldg.y+bldg.h/2,totalH+2);
+    ctx.fillStyle=BED[ci];ctx.font='bold 11px Barlow Condensed';ctx.textAlign='center';
+    ctx.fillText(`B${bldg.id}·${bldg.storeys}F·${bldg.totGFA.toFixed(0)}m²`,...tc);
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// GFA BREAKDOWN
+// ══════════════════════════════════════════════════════════
+function renderGFA(){
+  if(!R) return;
+  const{buildings,totWhGFA,totOffGFA,totGFA,lotArea,buarActual,maxGFA,buar,
+        totRamp,totStrRamp,crFootprint,cylFootprint,useStr,useCir,useCyl,
+        srW,srL,srSlope,crIn,crOut,crW,crSlope,crDir,cylR,cylW,cylTurns}=R;
+  const el=document.getElementById('gfaContent');
+  const FC=['f1','f2','f3','f4'];
+  const CN=['var(--accent2)','var(--purple)','var(--green)','var(--amber)'];
+
+  let h=`<div class="subtitle">
+    Total GFA: <span style="color:var(--accent);font-size:17px;font-weight:700">${totGFA.toFixed(0)} m²</span>
+    &nbsp; BUAR: <span style="color:var(--accent2);font-size:15px;font-weight:700">${buarActual.toFixed(2)}</span>
+    &nbsp; BUAR Limit: <span style="color:var(--amber);font-size:13px">×${buar} → ${maxGFA.toFixed(0)} m²</span>
+  </div>`;
+
+  buildings.forEach(bldg=>{
+    const ci=bldg.ci;
+    h+=`<div class="sb"><div class="sbt" style="color:${CN[ci]}">Building ${bldg.id} — ${bldg.storeys} Storey(s)</div>`;
+    h+=`<table class="tbl"><thead><tr><th>Level</th><th>Use</th><th>Footprint (m²)</th><th>WH GFA (m²)</th><th>Office Mezz (m²)</th><th>Level GFA</th><th>Ht (m)</th></tr></thead><tbody>`;
+    for(let f=1;f<=bldg.storeys;f++){
+      h+=`<tr><td><span class="ftag ${FC[f-1]||'f4'}">L${f}</span></td>
+        <td>Warehouse + Office Mezz</td>
+        <td>${bldg.fp.toFixed(0)}</td>
+        <td>${bldg.whGFApF.toFixed(0)}</td>
+        <td>${bldg.offGFApF.toFixed(1)}</td>
+        <td>${bldg.totGFApF.toFixed(1)}</td>
+        <td>${bldg.fh}</td></tr>`;
+    }
+    h+=`<tr class="tot"><td colspan="3">BLDG ${bldg.id} TOTALS</td>
+      <td>${bldg.whGFA.toFixed(0)} m²</td>
+      <td>${bldg.offGFA.toFixed(1)} m²</td>
+      <td>${bldg.totGFA.toFixed(0)} m²</td>
+      <td>${bldg.storeys*bldg.fh}m total</td></tr></tbody></table></div>`;
+  });
+
+  // Ramp breakdown
+  if(totRamp>0){
+    h+=`<div class="sb"><div class="sbt" style="color:var(--accent3)">Ramp Areas — Plinth Only (Non-GFA)</div>
+    <table class="tbl"><thead><tr><th>Type</th><th>Parameters</th><th>Formula</th><th>Footprint (m²)</th><th>Slope</th></tr></thead><tbody>`;
+    if(useStr) h+=`<tr><td><span class="badge badge-str">STRAIGHT</span></td>
+      <td>${srW}m W × ${srL}m L</td>
+      <td>W × L</td><td>${(srW*srL).toFixed(0)}</td><td>1:${srSlope} (${(100/srSlope).toFixed(1)}%)</td></tr>`;
+    if(useCir) h+=`<tr><td><span class="badge badge-cir">CIRCULAR</span></td>
+      <td>R_in=${crIn}m, R_out=${crOut}m, W=${crW}m, ${crDir}</td>
+      <td>π(R_out²−R_in²)</td><td>${crFootprint.toFixed(0)}</td><td>1:${crSlope} (${(100/crSlope).toFixed(1)}%)</td></tr>`;
+    if(useCyl) h+=`<tr><td><span class="badge badge-cyl">CYLINDRICAL</span></td>
+      <td>Core R=${cylR}m, Ramp W=${cylW}m, ${cylTurns} turns</td>
+      <td>π((R+W)²−R²)</td><td>${cylFootprint.toFixed(0)}</td><td>Along helix path</td></tr>`;
+    h+=`<tr class="tot"><td colspan="3">Total Ramp Footprint</td><td>${totRamp.toFixed(0)} m²</td><td>—</td></tr>
+    </tbody></table></div>`;
+  }
+
+  // Project summary
+  h+=`<div class="sb" style="border-color:var(--accent)">
+    <div class="sbt" style="color:var(--accent)">Project GFA Summary</div>
+    <table class="tbl"><thead><tr><th>Item</th><th>Area (m²)</th><th>% of Lot</th><th>Remarks</th></tr></thead><tbody>
+    <tr><td>Warehouse GFA</td><td>${totWhGFA.toFixed(0)}</td><td>${((totWhGFA/lotArea)*100).toFixed(1)}%</td><td>All storeys, all buildings</td></tr>
+    <tr><td>Office Mezzanine GFA</td><td>${totOffGFA.toFixed(1)}</td><td>${((totOffGFA/lotArea)*100).toFixed(1)}%</td><td>${R.offP??R.offPct??'3'}% of WH GFA per level (see inputs)</td></tr>
+    <tr><td>Total GFA</td><td>${totGFA.toFixed(0)}</td><td>${((totGFA/lotArea)*100).toFixed(1)}%</td><td>WH + Office</td></tr>
+    <tr><td>BUAR (Actual)</td><td colspan="2">${buarActual.toFixed(3)}</td><td>Limit: ≤ ${buar}</td></tr>
+    <tr><td>Max Allowable GFA</td><td>${maxGFA.toFixed(0)}</td><td>${((maxGFA/lotArea)*100).toFixed(1)}%</td><td>Lot × BUAR (${buar})</td></tr>
+    <tr><td>Total Plinth</td><td>${R.totPlinth.toFixed(0)}</td><td>${R.plinthPct.toFixed(1)}%</td><td>Buildings + Yards + Ramps</td></tr>
+    <tr><td>Landscape Area</td><td>${R.lscArea.toFixed(0)}</td><td>${R.lscPct.toFixed(1)}%</td><td>Lot − Plinth</td></tr>
+    <tr class="tot"><td>Lot Area</td><td>${lotArea.toFixed(0)}</td><td>100%</td><td>—</td></tr>
+    </tbody></table></div>`;
+
+  el.innerHTML=h;
+}
+
+// ══════════════════════════════════════════════════════════
+// PARKING
+// ══════════════════════════════════════════════════════════
+function renderParking(){
+  if(!R) return;
+  const{parking:pk,totWhGFA,totOffGFA,totGFA}=R;
+  const el=document.getElementById('parkingContent');
+
+  let h=`<div class="subtitle">Total Parking Required: <span style="color:var(--accent);font-size:17px;font-weight:700">${pk.total} slots</span>
+    &nbsp; + ${pk.truckBays} Truck Bays</div>`;
+
+  h+=`<div class="pg">
+    <div class="pkc"><div class="pkt">Warehouse Parking</div><div class="pkv">${pk.whPk}</div>
+      <div class="pks">1st 1,400m² = 1 slot<br>+1 per 232.2m² after<br>WH GFA: ${totWhGFA.toFixed(0)}m²</div></div>
+    <div class="pkc"><div class="pkt">Office Parking</div><div class="pkv">${pk.offPk}</div>
+      <div class="pks">1 per 46.4m² office<br>Office GFA: ${totOffGFA.toFixed(1)}m²</div></div>
+    <div class="pkc" style="border-color:var(--green)"><div class="pkt">Handicap / Accessible</div><div class="pkv" style="color:var(--green)">${pk.handicap}</div>
+      <div class="pks">max(2, 2% × ${pk.regTotal} regular)<br>Nearest to entrance</div></div>
+    <div class="pkc" style="border-color:var(--accent2)"><div class="pkt">Motorcycle</div><div class="pkv" style="color:var(--accent2)">${pk.moto}</div>
+      <div class="pks">1 per 185.8m² total GFA<br>GFA: ${totGFA.toFixed(0)}m²</div></div>
+    <div class="pkc" style="border-color:var(--accent3)"><div class="pkt">Truck Bays</div><div class="pkv" style="color:var(--accent3)">${pk.truckBays}</div>
+      <div class="pks">1 per 900m² WH GFA<br>Separate from parking</div></div>
+    <div class="pkc" style="border-color:var(--accent)"><div class="pkt">Total (excl. trucks)</div><div class="pkv" style="color:var(--accent)">${pk.total}</div>
+      <div class="pks">Est. area: ${(pk.carArea+pk.hcArea+pk.motoArea).toFixed(0)}m²<br>+aisles: ~${pk.totalParkArea.toFixed(0)}m²</div></div>
+  </div>`;
+
+  h+=`<div class="sb"><div class="sbt" style="color:var(--accent)">Parking Schedule</div>
+  <table class="tbl"><thead><tr><th>Category</th><th>Qty</th><th>Standard / Basis</th><th>Stall Dims</th><th>Stall Area (m²)</th><th>Subtotal (m²)</th></tr></thead><tbody>
+  <tr><td>Regular Car — Warehouse</td><td>${pk.whPk}</td><td>1/first 1,400m² + 1/232.2m² rem.</td><td>2.5×5.0m</td><td>${R.stallArea}</td><td>${(pk.whPk*R.stallArea).toFixed(0)}</td></tr>
+  <tr><td>Regular Car — Office</td><td>${pk.offPk}</td><td>1 per 46.4m² office GFA</td><td>2.5×5.0m</td><td>${R.stallArea}</td><td>${(pk.offPk*R.stallArea).toFixed(0)}</td></tr>
+  <tr><td>Handicap / Accessible</td><td>${pk.handicap}</td><td>max(2, 2% × total regular)</td><td>3.7×5.0m</td><td>18.5</td><td>${(pk.handicap*18.5).toFixed(0)}</td></tr>
+  <tr><td>Motorcycle</td><td>${pk.moto}</td><td>1 per 185.8m² total GFA</td><td>1.0×2.0m</td><td>2.0</td><td>${(pk.moto*2).toFixed(0)}</td></tr>
+  <tr><td>Truck Loading/Unloading Bays</td><td>${pk.truckBays}</td><td>1 per 900m² WH GFA (≈1/10,000 sqft)</td><td>4.0×18.0m</td><td>72.0</td><td>${(pk.truckBays*72).toFixed(0)}</td></tr>
+  <tr class="tot"><td colspan="3">TOTAL CAR + HC + MOTO (excl. trucks)</td><td colspan="2">${pk.total} slots</td><td>${(pk.carArea+pk.hcArea+pk.motoArea).toFixed(0)} m²</td></tr>
+  <tr class="tot"><td colspan="3">TOTAL incl. 40% aisle allowance</td><td colspan="2">—</td><td>${pk.totalParkArea.toFixed(0)} m²</td></tr>
+  </tbody></table></div>`;
+
+  h+=`<div class="sb" style="border-color:var(--amber)"><div class="sbt" style="color:var(--amber)">Parking Notes</div>
+  <div style="font-size:10px;color:var(--text-dim);line-height:1.9;">
+  • Handicap stalls (${pk.handicap}) must be located nearest to building entries and clearly marked with PH/OSCA signage.<br>
+  • Truck bays (${pk.truckBays}) require 18m depth + 18m maneuvering clear zone — excluded from car parking count.<br>
+  • Motorcycle slots may be covered or uncovered per local DPWH/fire code.<br>
+  • Aisle width: 6m (90° stall) to 3.5m (parallel). Drive aisle allowance at 40% added above.<br>
+  • Tandem parking not counted toward required slots.<br>
+  • All dimensions comply with BP 957 / PD 957 / RROW standards.
+  </div></div>`;
+
+  el.innerHTML=h;
+}
+
+// ══════════════════════════════════════════════════════════
+// COMPLIANCE
+// ══════════════════════════════════════════════════════════
+function renderCompliance(){
+  if(!R) return;
+  const{plinthPct,lscPct,totGFA,maxGFA,lotArea,maxP,minL,buildings,nStor,buarActual,buar,
+        parking:pk,useStr,useCir,useCyl,crIn,crOut,crW,srW,bzW,bzH}=R;
+  const el=document.getElementById('complianceContent');
+
+  function cc(label,val,sub,ok,unit='%',cls=''){
+    const c=cls||(ok?'pass':'fail');
+    const ic=ok?'&#10003; PASS':'&#10007; FAIL';
+    const disp=typeof val==='number'?val.toFixed(1):val;
+    return`<div class="cc ${c}"><div class="cl">${label}</div><div class="cv">${disp}${unit}</div><div class="cs">${sub}</div><div class="cst">${ic}</div></div>`;
+  }
+
+  let h=`<div class="cg">
+    ${cc('Plinth Coverage',plinthPct,`Limit ≤${maxP}%`,plinthPct<=maxP)}
+    ${cc('Landscape Area',lscPct,`Min ≥${minL}%`,lscPct>=minL)}
+    ${cc('BUAR',buarActual,`Limit ≤${buar}`,buarActual<=buar)}
+    ${cc('Total GFA',(totGFA/1000).toFixed(2),`${totGFA.toFixed(0)}m²`,totGFA<=maxGFA,'k m²','info')}
+    ${cc('Storeys',nStor,'1–4 permitted',nStor>=1&&nStor<=4,'')}
+    ${cc('Buildings',buildings.length,'1–4 permitted',buildings.length>=1&&buildings.length<=4,'')}
+    ${cc('Handicap Slots',pk.handicap,`≥ max(2, 2% of ${pk.regTotal})`,pk.handicap>=2&&pk.handicap>=Math.ceil(pk.regTotal*0.02),'')}
+    ${cc('Truck Bays',pk.truckBays,'≥ 1 per 900m² WH GFA',pk.truckBays>=1,'')}
+  </div>`;
+
+  const rules=[
+    {l:`Plinth Coverage ≤ ${maxP}%`,ok:plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
+    {l:`Landscape Area ≥ ${minL}%`,ok:lscPct>=minL,v:lscPct.toFixed(1)+'%'},
+    {l:`BUAR ≤ ${buar}`,ok:buarActual<=buar,v:buarActual.toFixed(3)},
+    {l:'GFA within BUAR limit',ok:totGFA<=maxGFA,v:totGFA.toFixed(0)+'m²'},
+    {l:'Storeys 1–4',ok:nStor>=1&&nStor<=4,v:nStor+'F'},
+    {l:'Buildings 1–4',ok:buildings.length>=1&&buildings.length<=4,v:buildings.length},
+    {l:'Setback clearance (>10m both dims)',ok:bzW>10&&bzH>10,v:bzW>10&&bzH>10?'OK':'TOO TIGHT'},
+  ];
+  if(useStr) rules.push({l:`Straight ramp width ≥ 9m (${srW}m)`,ok:srW>=9,v:srW+'m'});
+  if(useCir){
+    rules.push({l:`Circular ramp inner R ≥ 8m (${crIn}m)`,ok:crIn>=8,v:'R'+crIn+'m'});
+    rules.push({l:`Circular ramp outer R ≤ 18m (${crOut}m)`,ok:crOut<=18,v:'R'+crOut+'m'});
+    rules.push({l:`Circular ramp clear width ≥ 9m (${crW}m)`,ok:crW>=9,v:crW+'m'});
+  }
+  rules.push({l:`Handicap slots ≥ max(2, 2% of ${pk.regTotal})`,ok:pk.handicap>=2,v:pk.handicap+' slots'});
+  rules.push({l:`Truck bays ≥ 1 (${pk.truckBays})`,ok:pk.truckBays>=1,v:pk.truckBays+' bays'});
+
+  h+=`<table class="tbl"><thead><tr><th>Rule / Parameter</th><th>Status</th><th>Value</th></tr></thead><tbody>`;
+  rules.forEach(r=>{
+    h+=`<tr><td>${r.l}</td>
+      <td style="color:${r.ok?'var(--green)':'var(--red)'};font-weight:700;font-size:10px;">${r.ok?'&#10003; PASS':'&#10007; FAIL'}</td>
+      <td style="color:var(--accent2)">${r.v}</td></tr>`;
+  });
+  h+=`</tbody></table>`;
+
+  const allOk=rules.every(r=>r.ok);
+  h+=`<div style="margin-top:12px;padding:12px;background:${allOk?'#0a1f0a':'#1f0a0a'};border:1px solid ${allOk?'var(--green)':'var(--red)'};font-size:11px;color:${allOk?'var(--green)':'var(--red)'};font-weight:700;letter-spacing:2px;text-transform:uppercase;">
+    ${allOk?'&#10003; ALL RULES PASSED — DESIGN COMPLIANT':'&#10007; DESIGN NON-COMPLIANT — REVIEW FLAGGED RULES'}
+  </div>`;
+
+  el.innerHTML=h;
+}
+
+// ══════════════════════════════════════════════════════════
+// GEO DATA EXPORT (Shapely / GeoDataFrame)
+// ══════════════════════════════════════════════════════════
+function renderGeoData(){
+  if(!R) return;
+  const el=document.getElementById('geodataContent');
+  const{pts,buildings,yards,sramps,circRamp,cylRamp,bzMinX,bzMaxX,bzMinY,bzMaxY}=R;
+
+  // ── Build Python code strings ──────────────────────────
+  const ptsStr=pts.map(p=>`(${p[0]}, ${p[1]})`).join(', ');
+
+  let bldgPolys='';
+  buildings.forEach(bldg=>{
+    const x=bldg.x,y=bldg.y,w=bldg.w,h=bldg.h;
+    bldgPolys+=`    Polygon([(${x},${y}),(${x+w},${y}),(${x+w},${y+h}),(${x},${y+h})]),  # Bldg ${bldg.id}\n`;
+  });
+
+  let yardPolys='';
+  yards.forEach((yd,i)=>{
+    yardPolys+=`    Polygon([(${yd.x},${yd.y}),(${yd.x+yd.w},${yd.y}),(${yd.x+yd.w},${yd.y+yd.h}),(${yd.x},${yd.y+yd.h})]),  # Yard ${i+1}\n`;
+  });
+
+  let rampPolys='';
+  sramps.forEach((r,i)=>{
+    rampPolys+=`    Polygon([(${r.x.toFixed(1)},${r.y.toFixed(1)}),(${(r.x+r.w).toFixed(1)},${r.y.toFixed(1)}),(${(r.x+r.w).toFixed(1)},${(r.y+r.h).toFixed(1)}),(${r.x.toFixed(1)},${(r.y+r.h).toFixed(1)})]),  # Straight Ramp ${i+1}\n`;
+  });
+  if(circRamp){
+    rampPolys+=`    Point(${circRamp.cx.toFixed(1)}, ${circRamp.cy.toFixed(1)}).buffer(${circRamp.outerR}).difference(Point(${circRamp.cx.toFixed(1)}, ${circRamp.cy.toFixed(1)}).buffer(${circRamp.innerR})),  # Circular Ramp (annulus)\n`;
+  }
+  if(cylRamp){
+    rampPolys+=`    Point(${cylRamp.cx.toFixed(1)}, ${cylRamp.cy.toFixed(1)}).buffer(${cylRamp.outerR}).difference(Point(${cylRamp.cx.toFixed(1)}, ${cylRamp.cy.toFixed(1)}).buffer(${cylRamp.coreR})),  # Cylindrical Ramp (helix core)\n`;
+  }
+
+  // GFA summary for data
+  const gfaRows = buildings.map(b=>`        {"id":${b.id},"storeys":${b.storeys},"fp_m2":${b.fp.toFixed(0)},"wh_gfa":${b.whGFA.toFixed(0)},"off_gfa":${b.offGFA.toFixed(1)},"tot_gfa":${b.totGFA.toFixed(0)}}`).join(',\n');
+
+  const pythonCode =
+`# ═══════════════════════════════════════════════════════════
+# Industrial Warehouse Test-Fit — GeoDataFrame Export
+# Generated by IWTFS v3.0
+# Coordinate system: Local metric (X,Y in meters)
+# To use with real-world coords: apply CRS transform (see bottom)
+# ═══════════════════════════════════════════════════════════
+
+from shapely.geometry import Polygon, Point, MultiPolygon
+import geopandas as gpd
+import pandas as pd
+
+# ── 1. LOT POLYGON ──────────────────────────────────────────
+lot_coords = [${ptsStr}]
+lot_polygon = Polygon(lot_coords)
+
+# ── 2. SETBACK / BUILDABLE ZONE ─────────────────────────────
+buildable_zone = Polygon([
+    (${bzMinX}, ${bzMinY}),
+    (${bzMaxX}, ${bzMinY}),
+    (${bzMaxX}, ${bzMaxY}),
+    (${bzMinX}, ${bzMaxY})
+])
+
+# ── 3. BUILDINGS ────────────────────────────────────────────
+building_polygons = [
+${bldgPolys}]
+
+building_data = [
+${gfaRows}
+]
+
+# ── 4. TRUCK YARDS ──────────────────────────────────────────
+yard_polygons = [
+${yardPolys||'    # No yards\n'}]
+
+# ── 5. RAMPS ────────────────────────────────────────────────
+ramp_polygons = [
+${rampPolys||'    # No ramps\n'}]
+
+# ══════════════════════════════════════════════════════════
+# BUILD GeoDataFrames
+# ══════════════════════════════════════════════════════════
+
+# Lot GDF
+gdf_lot = gpd.GeoDataFrame(
+    [{"id": "lot", "area_m2": round(lot_polygon.area, 2),
+      "lot_area_m2": ${R.lotArea.toFixed(0)},
+      "buar_limit": ${R.buar},
+      "max_gfa_m2": ${R.maxGFA.toFixed(0)}}],
+    geometry=[lot_polygon],
+    crs="EPSG:32651"  # WGS84 / UTM Zone 51N (Philippines) — adjust to your project CRS
+)
+
+# Buildable zone GDF
+gdf_buildable = gpd.GeoDataFrame(
+    [{"id": "buildable_zone", "area_m2": round(buildable_zone.area, 2)}],
+    geometry=[buildable_zone],
+    crs="EPSG:32651"
+)
+
+# Buildings GDF
+bldg_df = pd.DataFrame(building_data)
+bldg_df["geometry"] = building_polygons
+gdf_buildings = gpd.GeoDataFrame(
+    bldg_df,
+    geometry="geometry",
+    crs="EPSG:32651"
+)
+gdf_buildings["footprint_m2"] = gdf_buildings.geometry.area.round(2)
+
+# Yards GDF
+gdf_yards = gpd.GeoDataFrame(
+    [{"id": f"yard_{i+1}", "use": "truck_yard", "area_m2": round(p.area, 2)}
+     for i, p in enumerate(yard_polygons)],
+    geometry=yard_polygons if yard_polygons else [Polygon()],
+    crs="EPSG:32651"
+) if yard_polygons else None
+
+# Ramps GDF
+gdf_ramps = gpd.GeoDataFrame(
+    [{"id": f"ramp_{i+1}", "use": "vehicle_ramp", "area_m2": round(p.area, 2)}
+     for i, p in enumerate(ramp_polygons)],
+    geometry=ramp_polygons if ramp_polygons else [Polygon()],
+    crs="EPSG:32651"
+) if ramp_polygons else None
+
+# Combined site GDF
+all_geoms   = [lot_polygon] + building_polygons + (yard_polygons or []) + (ramp_polygons or [])
+all_labels  = (["lot"] +
+               [f"building_{b['id']}" for b in building_data] +
+               [f"yard_{i+1}" for i in range(len(yard_polygons or []))] +
+               [f"ramp_{i+1}" for i in range(len(ramp_polygons or []))])
+all_uses    = (["lot"] +
+               ["warehouse"] * len(building_data) +
+               ["truck_yard"] * len(yard_polygons or []) +
+               ["vehicle_ramp"] * len(ramp_polygons or []))
+
+gdf_site = gpd.GeoDataFrame(
+    {"id": all_labels, "use": all_uses,
+     "area_m2": [round(g.area, 2) for g in all_geoms]},
+    geometry=all_geoms,
+    crs="EPSG:32651"
+)
+
+# ══════════════════════════════════════════════════════════
+# SUMMARY STATS
+# ══════════════════════════════════════════════════════════
+print("=== SITE SUMMARY ===")
+print(f"Lot Area       : ${R.lotArea.toFixed(0)} m²")
+print(f"Total GFA      : ${R.totGFA.toFixed(0)} m²")
+print(f"WH GFA         : ${R.totWhGFA.toFixed(0)} m²")
+print(f"Office GFA     : ${R.totOffGFA.toFixed(1)} m²")
+print(f"BUAR (actual)  : ${R.buarActual.toFixed(3)}")
+print(f"BUAR (limit)   : ${R.buar}")
+print(f"Plinth %       : ${R.plinthPct.toFixed(1)}%")
+print(f"Landscape %    : ${R.lscPct.toFixed(1)}%")
+print(f"Car Parking    : ${R.parking.regTotal} slots")
+print(f"Handicap       : ${R.parking.handicap} slots")
+print(f"Motorcycle     : ${R.parking.moto} slots")
+print(f"Truck Bays     : ${R.parking.truckBays}")
+print(gdf_buildings[["id","storeys","fp_m2","wh_gfa","off_gfa","tot_gfa"]])
+
+# ══════════════════════════════════════════════════════════
+# EXPORT OPTIONS
+# ══════════════════════════════════════════════════════════
+
+# GeoJSON (best for GIS tools, QGIS, Mapbox)
+gdf_site.to_file("warehouse_site.geojson", driver="GeoJSON")
+
+# Shapefile (for ArcGIS)
+gdf_buildings.to_file("buildings.shp")
+
+# GeoPackage (single file, recommended)
+gdf_lot.to_file("warehouse_site.gpkg", layer="lot", driver="GPKG")
+gdf_buildings.to_file("warehouse_site.gpkg", layer="buildings", driver="GPKG")
+if gdf_yards is not None:
+    gdf_yards.to_file("warehouse_site.gpkg", layer="yards", driver="GPKG")
+if gdf_ramps is not None:
+    gdf_ramps.to_file("warehouse_site.gpkg", layer="ramps", driver="GPKG")
+
+# CSV with WKT geometry
+gdf_site["wkt"] = gdf_site.geometry.apply(lambda g: g.wkt)
+gdf_site.drop(columns="geometry").to_csv("warehouse_site.csv", index=False)
+
+# ══════════════════════════════════════════════════════════
+# REAL-WORLD COORDINATES (Optional)
+# ══════════════════════════════════════════════════════════
+# If you have a real-world origin point (lat/lon), you can
+# shift and reproject:
+#
+# from shapely.affinity import translate
+# import pyproj
+# from functools import partial
+# from shapely.ops import transform
+#
+# ORIGIN_LAT = 14.5995   # Replace with your site origin latitude
+# ORIGIN_LON = 121.0    # Replace with your site origin longitude
+#
+# project = pyproj.Transformer.from_crs(
+#     "EPSG:32651", "EPSG:4326", always_xy=True).transform
+#
+# gdf_site_wgs84 = gdf_site.copy()
+# gdf_site_wgs84 = gdf_site_wgs84.to_crs("EPSG:4326")
+# gdf_site_wgs84.to_file("warehouse_site_wgs84.geojson", driver="GeoJSON")
+`;
+
+  // GeoJSON snippet
+  const geojsonFeatures = [
+    { type:'Feature', properties:{id:'lot',use:'lot',area_m2:R.lotArea.toFixed(0)},
+      geometry:{type:'Polygon',coordinates:[pts.map(p=>[p[0],p[1]])]} },
+    ...buildings.map(b=>({
+      type:'Feature',
+      properties:{id:`building_${b.id}`,use:'warehouse',storeys:b.storeys,fp_m2:b.fp.toFixed(0),wh_gfa:b.whGFA.toFixed(0),tot_gfa:b.totGFA.toFixed(0)},
+      geometry:{type:'Polygon',coordinates:[[[b.x,b.y],[b.x+b.w,b.y],[b.x+b.w,b.y+b.h],[b.x,b.y+b.h],[b.x,b.y]]]}
+    })),
+    ...yards.map((y,i)=>({
+      type:'Feature',
+      properties:{id:`yard_${i+1}`,use:'truck_yard',area_m2:(y.w*y.h).toFixed(0)},
+      geometry:{type:'Polygon',coordinates:[[[y.x,y.y],[y.x+y.w,y.y],[y.x+y.w,y.y+y.h],[y.x,y.y+y.h],[y.x,y.y]]]}
+    }))
+  ];
+  const geojson = JSON.stringify({type:'FeatureCollection',crs:{type:'name',properties:{name:'EPSG:32651'}},features:geojsonFeatures},null,2);
+
+  // Coordinate table
+  let coordTable=`<table class="tbl"><thead><tr><th>#</th><th>X (m)</th><th>Y (m)</th><th>Lat (approx)</th><th>Lon (approx)</th></tr></thead><tbody>`;
+  pts.forEach((p,i)=>{
+    coordTable+=`<tr><td>${i+1}</td><td>${p[0]}</td><td>${p[1]}</td>
+      <td style="color:var(--text-dim)">(set origin)</td>
+      <td style="color:var(--text-dim)">(set origin)</td></tr>`;
+  });
+  coordTable+=`</tbody></table>`;
+
+  h=`
+  <div class="conv-box">
+    <div class="conv-title">&#128205; Coordinate Converter — Shapely Polygon → GeoDataFrame</div>
+    <div class="conv-tabs">
+      <div class="ctab active" onclick="convTab('python',this)">Python / GeoPandas</div>
+      <div class="ctab" onclick="convTab('geojson',this)">GeoJSON</div>
+      <div class="ctab" onclick="convTab('coords',this)">Coordinate Table</div>
+      <div class="ctab" onclick="convTab('install',this)">Setup / Install</div>
+    </div>
+
+    <div id="conv-python">
+      <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;">
+        <span style="font-size:10px;color:var(--text-dim);">Complete Python script — Shapely + GeoPandas, all layers</span>
+        <button class="btn-copy" onclick="copyCode('pyCode')">Copy</button>
+        <button class="btn-sm" onclick="downloadCode('pyCode','warehouse_geodata.py')">&#8595; Download .py</button>
+      </div>
+      <pre class="code-out" id="pyCode">${pythonCode.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+    </div>
+
+    <div id="conv-geojson" style="display:none">
+      <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;">
+        <span style="font-size:10px;color:var(--text-dim);">GeoJSON FeatureCollection — paste into QGIS, Mapbox, or geojson.io</span>
+        <button class="btn-copy" onclick="copyCode('gjCode')">Copy</button>
+        <button class="btn-sm" onclick="downloadCode('gjCode','warehouse_site.geojson')">&#8595; Download .geojson</button>
+      </div>
+      <pre class="code-out" id="gjCode">${geojson.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+    </div>
+
+    <div id="conv-coords" style="display:none">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;">Lot vertex coordinates (local metric). Set a real-world origin in the Python script to get GPS coords.</div>
+      ${coordTable}
+    </div>
+
+    <div id="conv-install" style="display:none">
+      <pre class="code-out"># ── Install dependencies ─────────────────────────────────
+pip install geopandas shapely pandas pyproj fiona
+
+# or with conda:
+conda install -c conda-forge geopandas shapely
+
+# ── Quick test ────────────────────────────────────────────
+python -c "import geopandas; print(geopandas.__version__)"
+
+# ── Run the exported script ───────────────────────────────
+python warehouse_geodata.py
+
+# ── Open in QGIS ─────────────────────────────────────────
+# Drag and drop warehouse_site.geojson into QGIS
+# or: Layer → Add Layer → Add Vector Layer → warehouse_site.gpkg
+
+# ── View in browser ───────────────────────────────────────
+# Go to https://geojson.io and paste the GeoJSON content</pre>
+    </div>
+  </div>`;
+
+  el.innerHTML=h;
+}
+
+function convTab(id,el){
+  ['conv-python','conv-geojson','conv-coords','conv-install'].forEach(d=>{
+    document.getElementById(d).style.display=d===('conv-'+id)?'block':'none';
+  });
+  document.querySelectorAll('.ctab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function copyCode(id){
+  const txt=document.getElementById(id).textContent;
+  navigator.clipboard.writeText(txt).then(()=>{
+    const btn=event.target; btn.textContent='Copied!';
+    setTimeout(()=>btn.textContent='Copy',1500);
+  });
+}
+
+function downloadCode(id,filename){
+  const txt=document.getElementById(id).textContent;
+  const a=document.createElement('a');
+  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(txt);
+  a.download=filename; a.click();
+}
+
+// ══════════════════════════════════════════════════════════
+// TABS / DRAG / RESIZE
+// ══════════════════════════════════════════════════════════
+function switchTab(id){
+  const ids=['plan2d','view3d','gfa','parking','compliance','geodata'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',ids[i]===id));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  document.getElementById('pane-'+id).classList.add('active');
+  if(id==='plan2d') draw2D();
+  if(id==='view3d') draw3D();
+}
+function startDrag(e){cam.dragging=true;cam.lastX=e.clientX;cam.lastY=e.clientY;}
+function endDrag(){cam.dragging=false;}
+function onDrag(e){
+  if(!cam.dragging) return;
+  cam.rotY+=(e.clientX-cam.lastX)*0.4;
+  cam.rotX-=(e.clientY-cam.lastY)*0.4;
+  cam.rotX=Math.max(-80,Math.min(80,cam.rotX));
+  cam.lastX=e.clientX;cam.lastY=e.clientY;draw3D();
+}
+function onWheel(e){
+  e.preventDefault();
+  cam.zoom*=e.deltaY>0?0.9:1.1;
+  cam.zoom=Math.max(0.2,Math.min(5,cam.zoom));draw3D();
+}
+window.addEventListener('resize',()=>{draw2D();draw3D();});
+
+// Init
+document.getElementById('coordInput').value=PRESETS.rect;
+runSim();
+</script>
+</body>
+</html>
 
 // ══════════════════════════════════════════════════════════
 // SIMULATE
