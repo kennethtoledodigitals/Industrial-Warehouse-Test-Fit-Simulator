@@ -2,17 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Industrial Feasibility Simulator</title>
+<title>Industrial Simulator (Fixed)</title>
 
 <style>
-body { margin:0; display:flex; font-family:Arial; background:#0a0c0f; color:white; }
-#panel { width:320px; padding:15px; background:#111; }
-canvas { flex:1; background:#060810; }
+body { margin:0; font-family:Arial; background:#0a0c0f; color:white; display:flex }
+#panel { width:320px; padding:15px; background:#111 }
+canvas { flex:1; }
 
-input, select, textarea {
+input, textarea {
   width:100%;
   margin-bottom:10px;
-  padding:6px;
   background:#000;
   color:#fff;
   border:1px solid #333;
@@ -21,224 +20,175 @@ input, select, textarea {
 button {
   width:100%;
   padding:10px;
-  background:#e8ff47;
+  background:#47c8ff;
   border:none;
-  font-weight:bold;
 }
-
-h2 { color:#e8ff47; }
-.mode-title { color:#47c8ff; font-size:13px; margin-bottom:10px; }
 </style>
 </head>
 
 <body>
 
 <div id="panel">
-<h2>Feasibility Tool</h2>
+<h2>Industrial Layout</h2>
 
-<label>Country Mode</label>
-<select id="country" onchange="updateMode()">
-  <option value="SG">🇸🇬 Singapore</option>
-  <option value="MY">🇲🇾 Malaysia</option>
-</select>
-
-<div id="modeInfo" class="mode-title"></div>
-
-<label>Coordinate Mode</label>
-<select id="coordMode">
-  <option value="local">Local (meters)</option>
-  <option value="geo">Google Lat/Lon</option>
-</select>
-
-<label>Plot Ratio</label>
-<input id="pr" value="2.5">
-
-<label>Industrial Type / Zone</label>
-<select id="type">
-  <option value="b1">Light / B1</option>
-  <option value="b2">Heavy / B2</option>
-</select>
-
-<label>Lot Coordinates</label>
-<textarea id="coords">0,0
-120,0
-120,80
-0,80</textarea>
+<label>Lot Coordinates (lat,lon OR meters)</label>
+<textarea id="coords">
+1.3521,103.8198
+1.3523,103.8202
+1.3519,103.8203
+1.3518,103.8199
+</textarea>
 
 <label>Buildings</label>
-<input id="nB" value="2">
+<input id="nB" value="3">
 
 <label>Storeys</label>
 <input id="nS" value="2">
 
-<label>Yard Width (m)</label>
-<input id="yard" value="20">
+<label>Yard Width</label>
+<input id="yW" value="25">
 
-<button onclick="run()">Run Simulation</button>
-
+<button onclick="run()">Run</button>
 </div>
 
 <canvas id="cv"></canvas>
 
 <script>
 
-// ─────────────────────────────
-// GEO CONVERSION
-// ─────────────────────────────
+const ctx = cv.getContext("2d");
+
+// ✅ GEO conversion
 function latLonToMeters(lat, lon, oLat, oLon){
   const R = 6378137;
-  const dLat = (lat - oLat) * Math.PI / 180;
-  const dLon = (lon - oLon) * Math.PI / 180;
+  const dLat = (lat - oLat) * Math.PI/180;
+  const dLon = (lon - oLon) * Math.PI/180;
 
   return [
-    dLon * R * Math.cos(oLat * Math.PI / 180),
+    dLon * R * Math.cos(oLat*Math.PI/180),
     dLat * R
   ];
 }
 
-// ─────────────────────────────
-// PARSE COORDS
-// ─────────────────────────────
-function parse(){
+function parse(txt){
 
-  const mode = document.getElementById("coordMode").value;
-
-  let pts = coords.value.trim().split("\n").map(l=>{
-    const [a,b] = l.split(',').map(Number);
+  let pts = txt.trim().split('\n').map(l=>{
+    let [a,b] = l.split(',').map(Number);
     return [a,b];
   });
 
-  if(mode === "geo"){
-    const originLat = pts[0][0];
-    const originLon = pts[0][1];
-
-    pts = pts.map(p =>
-      latLonToMeters(p[0], p[1], originLat, originLon)
-    );
+  // detect lat lon
+  if(Math.abs(pts[0][0]) <= 90){
+    let o = pts[0];
+    pts = pts.map(p=>latLonToMeters(p[0],p[1],o[0],o[1]));
   }
 
   return pts;
 }
 
-// ─────────────────────────────
-// GEOMETRY
-// ─────────────────────────────
-function area(p){
-  let a=0;
-  for(let i=0;i<p.length;i++){
-    let j=(i+1)%p.length;
-    a+=p[i][0]*p[j][1]-p[j][0]*p[i][1];
-  }
-  return Math.abs(a/2);
-}
+function bbox(pts){
+  let xs=pts.map(p=>p[0]);
+  let ys=pts.map(p=>p[1]);
 
-function bbox(p){
-  let xs=p.map(v=>v[0]), ys=p.map(v=>v[1]);
   return {
-    minX:Math.min(...xs), maxX:Math.max(...xs),
-    minY:Math.min(...ys), maxY:Math.max(...ys)
+    minX:Math.min(...xs),
+    maxX:Math.max(...xs),
+    minY:Math.min(...ys),
+    maxY:Math.max(...ys)
   };
 }
 
-// ─────────────────────────────
-// MODE LABEL
-// ─────────────────────────────
-function updateMode(){
-  const mode = country.value;
-
-  if(mode==="SG"){
-    modeInfo.innerHTML = "Singapore (JTC rules active)";
-  } else {
-    modeInfo.innerHTML = "Malaysia (general industrial rules)";
-  }
-}
-
-// ─────────────────────────────
-// RUN SIMULATION
-// ─────────────────────────────
-const ctx = cv.getContext("2d");
-
+// ✅ MAIN
 function run(){
 
-  const pts = parse();
-  const b = bbox(pts);
+  let pts = parse(document.getElementById("coords").value);
+  let b = bbox(pts);
 
-  const lotArea = area(pts);
-  const pr = +pr.value;
-  const maxGFA = lotArea * pr;
+  let nB = +document.getElementById("nB").value;
+  let nS = +document.getElementById("nS").value;
+  let yW = +document.getElementById("yW").value;
 
-  const mode = country.value;
-  const typeVal = type.value;
-  const yardW = +yard.value;
-  const nBuildings = +nB.value;
+  const grid = 11.4;
 
-  let resultText = "";
+  let W = b.maxX - b.minX;
+  let H = b.maxY - b.minY;
 
-  // ── SG LOGIC ──
-  if(mode==="SG"){
-    const truckRadius = (typeVal==="b2") ? 15 : 12;
-    const truckOK = yardW >= truckRadius * 2;
+  const targetMin = 120;
+  const targetMax = 130;
 
-    resultText = `
-Mode: Singapore
-Max GFA: ${maxGFA.toFixed(0)}
-Truck Access: ${truckOK ? "OK ✅" : "FAIL ❌"}
-`;
+  let availH = H - (nB-1)*yW;
+
+  let bH = Math.min(targetMax, Math.max(targetMin, availH/nB));
+  bH = Math.floor(bH/grid)*grid;
+
+  let bw = Math.floor(W/grid)*grid;
+
+  let yCursor = b.minY;
+
+  let buildings=[];
+  let yards=[];
+
+  for(let i=0;i<nB;i++){
+
+    buildings.push({
+      x:b.minX,
+      y:yCursor,
+      w:bw,
+      h:bH
+    });
+
+    yCursor += bH;
+
+    if(i<nB-1){
+      yards.push({
+        x:b.minX,
+        y:yCursor,
+        w:bw,
+        h:yW
+      });
+      yCursor += yW;
+    }
   }
 
-  // ── MY LOGIC ──
-  if(mode==="MY"){
-    let coverage = (typeVal==="b1") ? 60 : 70;
+  draw(pts, buildings, yards);
+}
 
-    resultText = `
-Mode: Malaysia
-Max GFA: ${maxGFA.toFixed(0)}
-Coverage Limit: ${coverage}%
-`;
-  }
+// ✅ DRAW
+function draw(pts, buildings, yards){
 
-  // ─────────────────────────────
-  // DRAW
-  // ─────────────────────────────
-  cv.width = window.innerWidth - 320;
+  cv.width = window.innerWidth-320;
   cv.height = window.innerHeight;
 
   ctx.clearRect(0,0,cv.width,cv.height);
 
-  const scale = 3;
+  let scale=2;
 
-  // Lot
+  // lot
   ctx.beginPath();
   pts.forEach((p,i)=>{
-    if(i===0) ctx.moveTo(p[0]*scale, p[1]*scale);
-    else ctx.lineTo(p[0]*scale, p[1]*scale);
+    if(i===0) ctx.moveTo(p[0]*scale,p[1]*scale);
+    else ctx.lineTo(p[0]*scale,p[1]*scale);
   });
   ctx.closePath();
-  ctx.strokeStyle="#e8ff47";
+  ctx.strokeStyle="#47c8ff";
   ctx.stroke();
 
-  // Buildings
-  const bw = (b.maxX - b.minX) / nBuildings;
-
-  for(let i=0;i<nBuildings;i++){
-    const x = b.minX + i * bw;
-    const y = b.minY;
-
+  // buildings
+  buildings.forEach(b=>{
     ctx.fillStyle="#0d1e2e";
-    ctx.fillRect(x*scale, y*scale, bw*scale, 30*scale);
-  }
+    ctx.fillRect(b.x*scale,b.y*scale,b.w*scale,b.h*scale);
+    ctx.strokeStyle="#47c8ff";
+    ctx.strokeRect(b.x*scale,b.y*scale,b.w*scale,b.h*scale);
+  });
 
-  // Text output
-  ctx.fillStyle="white";
-  ctx.font="12px Arial";
-
-  resultText.split("\n").forEach((line,i)=>{
-    ctx.fillText(line.trim(),20,20 + i*15);
+  // yards
+  yards.forEach(y=>{
+    ctx.fillStyle="#0c1e0c";
+    ctx.fillRect(y.x*scale,y.y*scale,y.w*scale,y.h*scale);
+    ctx.strokeStyle="#3dff9a";
+    ctx.strokeRect(y.x*scale,y.y*scale,y.w*scale,y.h*scale);
   });
 }
 
-// INIT
-updateMode();
 run();
 
 </script>
