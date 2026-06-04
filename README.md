@@ -4,7 +4,7 @@
 
 A browser-based simulator for architects, planners, and developers to quickly test-fit industrial warehouse layouts on any lot shape — no software installation required.
 
-🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/)
+🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/))
 
 ---
 
