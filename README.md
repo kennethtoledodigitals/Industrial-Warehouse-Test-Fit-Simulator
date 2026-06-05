@@ -254,13 +254,7 @@ warehouse_site.csv       → CSV with WKT geometry column
 ## 📋 Standards Referenced
 
 | Standard | Description |
-|---|---|
-| BP 957 | Subdivision and Condominium Buyer's Protective Decree (Philippines) |
-| PD 957 | Subdivision and Condominium Regulation |
-| DPWH Guidelines | Department of Public Works and Highways |
-| RROW | Right-of-Way dimensional standards |
-| OSCA / PWD | Accessible facility requirements (handicap parking) |
-| BFP | Bureau of Fire Protection — fire access road ≥ 6m |
+Malaysia Standards - Johor Bahru Malaysia - Industrial Buildings
 
 ---
 
