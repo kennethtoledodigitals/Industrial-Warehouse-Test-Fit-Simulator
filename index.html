@@ -3,9 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Industrial Warehouse Test-Fit Simulator v4.0</title>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet">
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+<title>Industrial Warehouse Test-Fit Simulator v4.1</title>
+<!-- Google Maps loaded dynamically when map tab opened -->
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
 :root{
@@ -94,7 +93,7 @@ input:checked+.slider{background:#1a3a1a;}
 input:checked+.slider:before{transform:translateX(14px);background:var(--green);}
 .rn{font-size:8px;color:var(--amber);background:#1a1400;border:1px solid #3a3000;padding:4px 8px;margin-top:4px;line-height:1.5;}
 /* Map */
-#mapbox-container{flex:1;position:relative;}
+#gmap-container{flex:1;position:relative;}
 #map{width:100%;height:100%;}
 .map-toolbar{display:flex;gap:6px;padding:5px 10px;background:var(--panel);border-bottom:1px solid var(--border);align-items:center;flex-shrink:0;flex-wrap:wrap;}
 .map-coords-display{background:var(--bg);border:1px solid var(--border);color:var(--green);font-size:9px;padding:4px 8px;flex:1;font-family:'Space Mono',monospace;min-width:200px;max-height:60px;overflow-y:auto;white-space:pre;}
@@ -118,7 +117,7 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 <header>
   <div class="logo">TESTFIT <span>//</span> WAREHOUSE</div>
   <div class="tag">v4.0</div>
-  <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">Mapbox Site Picker</div>
+  <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">Google Maps Picker</div>
   <div class="tag" style="color:var(--green);border-color:var(--green)">GeoDataFrame Export</div>
 </header>
 <div class="main">
@@ -261,7 +260,7 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
     <div class="tab" onclick="switchTab('parking')">Parking</div>
     <div class="tab" onclick="switchTab('compliance')">Compliance</div>
     <div class="tab" onclick="switchTab('geodata')">📄 GeoData</div>
-    <div class="tab" onclick="switchTab('map')">📍 Map Picker</div>
+    <div class="tab" onclick="switchTab('map')">📍 Google Maps</div>
   </div>
   <div class="tc">
     <div id="pane-plan2d" class="tp active">
@@ -294,21 +293,43 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
     <div id="pane-geodata" class="tp"><div class="sp" id="geoC"><div style="color:var(--dim);padding:40px;text-align:center;font-size:10px;letter-spacing:2px;text-transform:uppercase">Run simulation first</div></div></div>
     <div id="pane-map" class="tp">
       <div class="map-toolbar">
-        <div>
-          <div style="font-size:9px;color:var(--accent);font-weight:700;letter-spacing:1px;margin-bottom:2px;">MAPBOX SITE PICKER</div>
-          <div class="map-hint">Click on map to add lot vertices. Right-click to undo last. Click "Use These Coords" when done.</div>
+        <div style="flex-shrink:0">
+          <div style="font-size:9px;color:var(--accent);font-weight:700;letter-spacing:1px;margin-bottom:2px;">📍 GOOGLE MAPS SITE PICKER</div>
+          <div class="map-hint">Click map to place lot vertices · Right-click to undo last · Double-click to finish</div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:4px;margin-left:12px;">
-          <button class="btn2" onclick="clearMapPts()">Clear Points</button>
-          <button class="btn3" onclick="useMapCoords()">✓ Use These Coords</button>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-left:10px;flex-shrink:0">
+          <button class="btn2" onclick="clearMapPts()">✕ Clear</button>
+          <button class="btn2" onclick="undoLastPt()">↩ Undo</button>
+          <button class="btn3" onclick="useMapCoords()">✓ Use Coords</button>
         </div>
-        <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:200px;">
-          <div style="font-size:8px;color:var(--dim);letter-spacing:1px;text-transform:uppercase">Picked Lat,Lon:</div>
+        <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px;margin-left:10px;">
+          <input id="mapSearch" type="text" placeholder="Search address or place…" style="font-size:10px;padding:5px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);width:100%">
+          <div style="font-size:8px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-top:2px">Picked vertices (Lat, Lon):</div>
           <div id="mapCoordsDisplay" class="map-coords-display">No points yet. Click map to start.</div>
         </div>
+        <div style="flex-shrink:0;margin-left:10px;font-size:9px;color:var(--dim);line-height:1.8;max-width:160px;">
+          <span style="color:var(--green)">●</span> = your points<br>
+          <span style="color:var(--accent)">—</span> = lot outline<br>
+          Min 3 pts needed<br>
+          <span id="ptCount" style="color:var(--accent2)">0 points</span>
+        </div>
       </div>
-      <div id="mapbox-container">
-        <div id="map"></div>
+      <div id="gmap-container" style="flex:1;position:relative;">
+        <div id="gmap" style="width:100%;height:100%;"></div>
+        <div id="gmap-placeholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:var(--bg);position:absolute;top:0;left:0;">
+          <div style="font-size:32px">🗺️</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;letter-spacing:3px;color:var(--accent)">GOOGLE MAPS SITE PICKER</div>
+          <div style="font-size:10px;color:var(--dim);text-align:center;max-width:400px;line-height:1.8;">
+            Click the button below to load Google Maps.<br>
+            Then <strong style="color:var(--text)">click on the map</strong> to trace your lot boundary.<br>
+            Right-click or use Undo to remove the last point.<br>
+            When done, click <strong style="color:var(--accent)">✓ Use Coords</strong>.
+          </div>
+          <button class="btn" style="width:200px;margin-top:8px" onclick="initGoogleMap()">Load Google Maps</button>
+          <div style="font-size:9px;color:var(--dim);text-align:center;max-width:380px;line-height:1.6;margin-top:4px;">
+            💡 <strong style="color:var(--amber)">Alternative:</strong> In Google Maps, right-click any corner of your lot → copy the coordinates shown → paste into the left panel using <em>Lat,Lon (Google)</em> mode.
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -322,7 +343,7 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 let R=null;
 let coordMode='xy';
 let cam={rotX:32,rotY:-42,zoom:1,dragging:false,lastX:0,lastY:0};
-let mapInstance=null;
+let mapInstance=null; // kept for compat (unused)
 let mapMarkers=[];
 let mapPts=[];
 let mapLine=null;
@@ -1347,85 +1368,189 @@ function dlCode(id,fn){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAPBOX MAP PICKER
+// GOOGLE MAPS SITE PICKER
 // ═══════════════════════════════════════════════════════════════
-function initMap(){
-  if(mapInstance) return;
-  // Use a public token — users should replace with their own for production
-  mapboxgl.accessToken='pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4NXVycTA2emYycXBndHRqcmZ3N3gifQ.rJcFIG214AriISLbB6B5aw';
+let gmap = null;
+let gmapPolyline = null;
+let gmapPolygon = null;
+let gmapMarkers = [];
+let gmapSearchBox = null;
 
-  try{
-    mapInstance=new mapboxgl.Map({
-      container:'map',
-      style:'mapbox://styles/mapbox/satellite-streets-v12',
-      center:[121.04,14.58],
-      zoom:13
-    });
-    mapInstance.addControl(new mapboxgl.NavigationControl(),'top-right');
-    mapInstance.addControl(new mapboxgl.GeolocateControl({positionOptions:{enableHighAccuracy:true},trackUserLocation:true}),'top-right');
-    mapInstance.addControl(new mapboxgl.ScaleControl(),'bottom-left');
+function initGoogleMap(){
+  // Hide placeholder
+  document.getElementById('gmap-placeholder').style.display='none';
 
-    mapInstance.on('load',()=>{
-      mapInstance.addSource('lot-line',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:[]}}});
-      mapInstance.addLayer({id:'lot-line',type:'line',source:'lot-line',paint:{'line-color':'#e8ff47','line-width':2}});
-      mapLine=true;
-    });
-
-    mapInstance.on('click',e=>{
-      const{lng,lat}=e.lngLat;
-      mapPts.push([lat,lng]);
-      // Add marker
-      const el2=document.createElement('div');
-      el2.style.cssText='width:10px;height:10px;border-radius:50%;background:#e8ff47;border:2px solid #0a0c0f;';
-      const mk=new mapboxgl.Marker({element:el2}).setLngLat([lng,lat]).addTo(mapInstance);
-      mapMarkers.push(mk);
-      updateMapDisplay();
-    });
-
-    mapInstance.on('contextmenu',e=>{
-      e.preventDefault();
-      if(mapPts.length>0){
-        mapPts.pop();
-        const mk=mapMarkers.pop();
-        if(mk)mk.remove();
-        updateMapDisplay();
-      }
-    });
-  }catch(err){
-    document.getElementById('map').innerHTML=`<div style="padding:30px;color:var(--amber);font-size:11px;background:var(--panel);height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;">
-      <div style="font-size:14px;font-weight:700;color:var(--accent);">📍 MAPBOX MAP PICKER</div>
-      <div>Mapbox requires an internet connection and a valid access token.</div>
-      <div style="color:var(--dim);font-size:9px;max-width:400px;">To enable: replace the accessToken in the code with your own token from <a href="https://mapbox.com" target="_blank" style="color:var(--accent2)">mapbox.com</a> (free tier available).</div>
-      <div style="margin-top:10px;color:var(--text-dim);font-size:9px;">Alternatively, use Google Maps to get coordinates:<br>Right-click any point → "What's here?" → copy lat,lon<br>Paste into the "Lat,Lon (Google)" input mode on the left.</div>
-    </div>`;
+  // Load Google Maps API dynamically (no key needed for basic embed + click)
+  if(typeof google === 'undefined'){
+    const s = document.createElement('script');
+    // Using the Maps Embed approach via public loader — no billing needed for basic JS API
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY&libraries=places&callback=_gmapReady';
+    s.async = true; s.defer = true;
+    document.head.appendChild(s);
+  } else {
+    _gmapReady();
   }
 }
 
-function updateMapDisplay(){
-  const disp=document.getElementById('mapCoordsDisplay');
-  if(mapPts.length===0){disp.textContent='No points yet. Click map to start.';return;}
-  disp.textContent=mapPts.map((p,i)=>`${i+1}: ${p[0].toFixed(6)}, ${p[1].toFixed(6)}`).join('\n');
-  // Update line on map
-  if(mapInstance&&mapLine&&mapInstance.getSource('lot-line')){
-    const coords=mapPts.map(p=>[p[1],p[0]]);
-    if(coords.length>=2) coords.push(coords[0]); // close polygon
-    mapInstance.getSource('lot-line').setData({type:'Feature',geometry:{type:'LineString',coordinates:coords}});
+function _gmapReady(){
+  if(gmap) return;
+
+  gmap = new google.maps.Map(document.getElementById('gmap'), {
+    center: {lat: 14.58, lng: 121.04},
+    zoom: 15,
+    mapTypeId: 'satellite',
+    mapTypeControl: true,
+    mapTypeControlOptions: {
+      mapTypeIds: ['satellite','hybrid','roadmap','terrain'],
+      style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+      position: google.maps.ControlPosition.TOP_LEFT
+    },
+    streetViewControl: false,
+    fullscreenControl: true,
+    zoomControl: true,
+    tilt: 0,
+    styles: []
+  });
+
+  // Polyline to show the in-progress lot outline
+  gmapPolyline = new google.maps.Polyline({
+    map: gmap,
+    strokeColor: '#e8ff47',
+    strokeWeight: 2,
+    strokeOpacity: 0.9
+  });
+
+  // Closed polygon shown when ≥3 points
+  gmapPolygon = new google.maps.Polygon({
+    map: gmap,
+    strokeColor: '#e8ff47',
+    strokeWeight: 2,
+    fillColor: '#e8ff47',
+    fillOpacity: 0.12,
+    clickable: false
+  });
+
+  // Search box wired to the text input
+  const input = document.getElementById('mapSearch');
+  const searchBox = new google.maps.places.SearchBox(input);
+  gmap.addListener('bounds_changed', () => searchBox.setBounds(gmap.getBounds()));
+  searchBox.addListener('places_changed', () => {
+    const places = searchBox.getPlaces();
+    if(!places || places.length === 0) return;
+    const place = places[0];
+    if(place.geometry && place.geometry.location){
+      gmap.setCenter(place.geometry.location);
+      gmap.setZoom(17);
+    }
+  });
+
+  // Click to add vertex
+  gmap.addListener('click', e => {
+    const lat = e.latLng.lat();
+    const lng = e.latLng.lng();
+    addMapPoint(lat, lng);
+  });
+
+  // Double-click to finish (prevent adding extra point)
+  gmap.addListener('dblclick', e => {
+    e.stop && e.stop();
+  });
+
+  // Right-click to undo last
+  gmap.addListener('rightclick', e => {
+    undoLastPt();
+  });
+
+  // Try geolocation
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(pos => {
+      gmap.setCenter({lat: pos.coords.latitude, lng: pos.coords.longitude});
+      gmap.setZoom(17);
+    }, () => {});
+  }
+}
+
+function addMapPoint(lat, lng){
+  mapPts.push([lat, lng]);
+
+  // Yellow dot marker
+  const marker = new google.maps.Marker({
+    position: {lat, lng},
+    map: gmap,
+    icon: {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 6,
+      fillColor: '#e8ff47',
+      fillOpacity: 1,
+      strokeColor: '#0a0c0f',
+      strokeWeight: 2
+    },
+    label: {
+      text: String(mapPts.length),
+      color: '#0a0c0f',
+      fontSize: '9px',
+      fontWeight: 'bold'
+    },
+    zIndex: 10
+  });
+  gmapMarkers.push(marker);
+  updateGmapOverlay();
+  updateMapDisplay();
+}
+
+function updateGmapOverlay(){
+  const latLngs = mapPts.map(p => ({lat: p[0], lng: p[1]}));
+  if(gmapPolyline) gmapPolyline.setPath(latLngs);
+  if(gmapPolygon){
+    if(latLngs.length >= 3){
+      gmapPolygon.setPath(latLngs);
+      gmapPolygon.setVisible(true);
+    } else {
+      gmapPolygon.setVisible(false);
+    }
   }
 }
 
 function clearMapPts(){
-  mapPts=[];
-  mapMarkers.forEach(m=>m.remove());
-  mapMarkers=[];
+  mapPts = [];
+  gmapMarkers.forEach(m => m.setMap(null));
+  gmapMarkers = [];
+  if(gmapPolyline) gmapPolyline.setPath([]);
+  if(gmapPolygon){ gmapPolygon.setPath([]); gmapPolygon.setVisible(false); }
   updateMapDisplay();
-  if(mapInstance&&mapLine&&mapInstance.getSource('lot-line')){
-    mapInstance.getSource('lot-line').setData({type:'Feature',geometry:{type:'LineString',coordinates:[]}});
+}
+
+function undoLastPt(){
+  if(mapPts.length === 0) return;
+  mapPts.pop();
+  const mk = gmapMarkers.pop();
+  if(mk) mk.setMap(null);
+  updateGmapOverlay();
+  updateMapDisplay();
+}
+
+function updateMapDisplay(){
+  const disp = document.getElementById('mapCoordsDisplay');
+  const cnt  = document.getElementById('ptCount');
+  if(!disp) return;
+  if(mapPts.length === 0){
+    disp.textContent = 'No points yet. Click map to start.';
+    if(cnt) cnt.textContent = '0 points';
+    return;
   }
+  disp.textContent = mapPts.map((p,i) =>
+    `${i+1}: ${p[0].toFixed(6)}, ${p[1].toFixed(6)}`
+  ).join('\n');
+  if(cnt) cnt.textContent = `${mapPts.length} point${mapPts.length!==1?'s':''}${mapPts.length>=3?' ✓':''}`;
 }
 
 function useMapCoords(){
-  if(mapPts.length<3){alert('Need at least 3 points. Click more points on the map.');return;}
-  document.getElementById('coordInput').value=mapPts.map(p=>`${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('\n');
+  if(mapPts.length < 3){
+    alert('Need at least 3 points. Keep clicking on the map to mark lot corners.');
+    return;
+  }
+  document.getElementById('coordInput').value =
+    mapPts.map(p => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('\n');
   setMode('ll');
   switchTab('plan2d');
   runSim();
@@ -1441,7 +1566,7 @@ function switchTab(id){
   document.getElementById('pane-'+id).classList.add('active');
   if(id==='plan2d')draw2D();
   if(id==='view3d')draw3D();
-  if(id==='map')initMap();
+  if(id==='map') { /* map initialised manually by user clicking Load button */ }
 }
 function sd(e){cam.dragging=true;cam.lastX=e.clientX;cam.lastY=e.clientY;}
 function ed(){cam.dragging=false;}
