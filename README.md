@@ -1,52 +1,243 @@
-[README (1).md](https://github.com/user-attachments/files/28375136/README.1.md)
-# 🏭 Industrial Warehouse Test-Fit Simulator
-### TESTFIT // WAREHOUSE — Design Simulator v1.0
+[README.md](https://github.com/user-attachments/files/28634174/README.md)
+# 🏭 Industrial Warehouse Test-Fit Simulator (IWTFS)
+### Design Simulator v4.1 — Browser-Based, Zero Installation
 
-A browser-based simulator for architects, planners, and developers to quickly test-fit industrial warehouse layouts on any lot shape — no software installation required.
+> A fully browser-based industrial warehouse test-fit tool for architects, planners, and developers. Trace any lot shape using Google Maps, configure buildings and ramps, and instantly generate a compliant site layout with GFA breakdown, parking schedule, and GeoDataFrame export — no software required.
 
-🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/))
-
----
-
-## 📐 What It Does
-
-The Industrial Warehouse Test-Fit Simulator lets you define a lot polygon, configure building parameters, and instantly generate a compliant warehouse layout — complete with 2D site plan, 3D massing, GFA breakdown, and zoning compliance report.
-
-It's designed for early-stage feasibility studies where speed matters more than construction documents.
+🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/)
 
 ---
 
 ## ✨ Features
 
-- **Custom Lot Polygon** — Input any lot shape by entering X,Y coordinates (meters), or choose from presets: Rectangle, L-Shape, Trapezoid, or Irregular
-- **Setback Controls** — Define front, rear, left, and right setbacks in meters
-- **Building Configuration** — Choose 1 or 2 buildings, 1–3 storeys, floor height, yard width, ramp length, and ramp width
-- **Zoning Rules** — Set maximum plinth coverage (%) and minimum landscape area (%)
-- **2D Site Plan View** — Visual plan showing lot boundary, setback zone, buildings, yard, ramp, and landscape areas
-- **3D Massing View** — Interactive isometric view with drag-to-rotate and scroll-to-zoom
-- **GFA Breakdown** — Gross Floor Area summary per building and total
-- **Compliance Report** — Instant check against your zoning inputs
+### 🗺️ Google Maps Site Picker
+- Click the **📍 Google Maps** tab to open an interactive satellite map
+- Click on map corners to trace your lot boundary — numbered vertices placed automatically
+- Undo last point, clear all, or search by address
+- Hit **✓ Use Coords** to push coordinates directly into the simulator
+- Alternative: paste `Lat,Lon` pairs copied from Google Maps right-click → "What's here?"
+
+### 📐 Coordinate Input Modes
+- **Local X,Y (meters)** — manual entry, ideal for preset shapes
+- **Lat,Lon (Google Maps)** — auto-converted to local metric using Haversine projection
+- Preset lot shapes: Rectangle, L-Shape, Trapezoid, Irregular, Large Site
+
+### 🏗️ Building Layout Engine
+- **1–4 buildings** stacked with shared truck yards sandwiched between pairs
+- **1–4 storeys**, configurable floor height (4–15m)
+- Buildings always constrained inside the buildable zone — never exceeds the lot boundary
+- **BUAR** (Built-Up Area Ratio) configurable multiplier (e.g. 1.5×, 2.5×)
+- **Office Mezzanine** — 3% of warehouse GFA per level per building (configurable)
+
+### 🚗 Ramp Types (3 Independent, Each Individually Toggleable)
+
+| Badge | Type | Slope | Description |
+|---|---|---|---|
+| `STR` | Straight Ramp | 1:12 (8.33%) | Hatched slab; configurable width ≥9m and run length |
+| `U-RAMP` | Semi-Circular U-Ramp | Curve 1:20 · Straight arms 1:12 | Two straight arms + semi-circular head (matches reference design); inner R ≥ 6m |
+| `CYL` | Cylindrical Helix | ≤ 1:12 along path | Compact spiral core; configurable radius, lane width, and number of turns |
+
+### 🌿 Site Layers (Outside → In)
+```
+Lot Boundary
+  └─ Perimeter Green Strip  (≥ 2m, configurable)
+       └─ Fire Access Road  (≥ 6m wide — parking on both sides)
+            └─ Building Green Strip  (2m around each building)
+                 └─ Setbacks  (Front / Rear / Left / Right)
+                      └─ Buildable Zone → Buildings · Truck Yards · Ramps
+```
+
+### 🅿️ Parking Calculator
+Automatically computed per Philippine standards (BP 957 / DPWH / RROW):
+
+| Category | Basis |
+|---|---|
+| Warehouse Parking | 1 slot per first 1,400 m² GFA; then 1 per 232.2 m² remaining |
+| Office Parking | 1 per 46.4 m² office GFA |
+| Handicap / Accessible | max(2, 2% of total regular slots) |
+| Motorcycle | 1 per 185.8 m² total GFA |
+| Truck Loading / Unloading Bays | 1 per 900 m² warehouse GFA (≈ 1 per 10,000 sqft) |
+
+Stall size options: 2.5 × 5.0 m (Standard) or 2.7 × 5.0 m (Wide)
+
+### 🔧 Ancillary Areas
+- **MEP / Utility Room** — minimum 600 m², configurable up to 2,000 m²
+- **Guard House** — 40 m² at main entrance/exit gate (configurable)
+
+### 📊 Output Tabs
+
+| Tab | Contents |
+|---|---|
+| **2D Site Plan** | Canvas plan view: lot boundary, green strips, fire road, perimeter parking, buildings, truck yards, all ramp types, MEP room, guard house, scale bar, vertex labels |
+| **3D Massing** | Interactive isometric — drag to rotate, scroll to zoom, floor division lines rendered |
+| **GFA Breakdown** | Per-building per-floor table: warehouse GFA, office mezzanine GFA, ramp footprints with formulas (W×L, π(R²out − R²in)) |
+| **Parking** | Full parking schedule with stall dimensions, area subtotals, 40% aisle allowance, site notes |
+| **Compliance** | Pass/fail summary cards + detailed rule-by-rule checklist |
+| **📄 GeoData** | Python/GeoPandas code, GeoJSON download, coordinate table, install guide |
+| **📍 Google Maps** | Interactive satellite site picker with click-to-place vertices |
+
+### 🗄️ GeoDataFrame Export
+- Complete **Python script** (Shapely + GeoPandas): lot polygon, buildable zone, buildings, yards, ramps, MEP area, and guard house — each as a separate named GeoDataFrame layer
+- **GeoJSON** file — paste directly into QGIS, Mapbox, or [geojson.io](https://geojson.io)
+- **GeoPackage** (`.gpkg`) — all layers in one file
+- CRS: `EPSG:32651` (WGS84 / UTM Zone 51N — Philippines); easy to change for other regions
+- In-browser **Copy** and **Download** buttons for both `.py` and `.geojson`
+
+### ✅ Compliance Engine
+Auto-checks every simulation against:
+
+- Max Plinth Coverage %
+- Min Landscape Area %
+- BUAR (Built-Up Area Ratio) limit
+- Total GFA vs. BUAR max
+- Storeys within 1–4
+- Setback clearance (both dimensions)
+- Fire road ≥ 6 m
+- Perimeter green strip ≥ 2 m
+- Building green strip ≥ 2 m
+- MEP area ≥ 600 m²
+- Guard house ≥ 40 m²
+- Handicap slots ≥ max(2, 2% of regular)
+- Truck bay provision
+- Straight ramp width ≥ 9 m
+- U-ramp inner radius ≥ 6 m, clear width ≥ 9 m
 
 ---
 
-## 🚀 How to Use
+## 🚀 Quick Start
 
-1. **Open the simulator** at the live link above — no account or installation needed
-2. **Enter your lot polygon** coordinates (one vertex per line: `X,Y` in meters), or select a preset shape
-3. **Set your setbacks** for all four sides
-4. **Configure the building** — number of buildings, storeys, floor height, yard, and ramp dimensions
-5. **Input zoning rules** — max plinth % and min landscape %
-6. **Click ▶ RUN SIMULATION**
-7. Explore the **2D Site Plan**, **3D Massing**, **GFA Breakdown**, and **Compliance** tabs
+### Option 1 — Use the Live Site (Recommended)
+Visit the live demo link at the top. No account, no installation, no login required.
+
+### Option 2 — Run Locally
+```bash
+git clone https://github.com/kennethtoledodigitals/Industrial-Warehouse-Test-Fit-Simulator.git
+cd Industrial-Warehouse-Test-Fit-Simulator
+
+# Open in your browser:
+open index.html          # macOS
+start index.html         # Windows
+xdg-open index.html      # Linux
+```
+
+### Option 3 — Fork and Deploy Your Own
+1. Fork this repo on GitHub
+2. Go to **Settings → Pages**
+3. Set source to `main` branch → `/ (root)` → Save
+4. Your copy is live at `https://<your-username>.github.io/Industrial-Warehouse-Test-Fit-Simulator/`
 
 ---
 
-## 🖥️ Technical Details
+## 🗺️ How to Get Lot Coordinates
 
-- Built with **HTML, CSS, and JavaScript** — runs entirely in the browser
-- No backend, no database, no login required
-- Hosted on **GitHub Pages**
-- Compatible with modern browsers (Chrome, Firefox, Edge, Safari)
+### Method A — In-App Map Picker *(easiest)*
+1. Open simulator → click **📍 Google Maps** tab
+2. Click **Load Google Maps**
+3. Navigate to your site → click each lot corner to place a vertex
+4. Click **✓ Use Coords** — the simulation runs automatically
+
+### Method B — Google Maps Right-Click
+1. Go to [maps.google.com](https://maps.google.com)
+2. Navigate to your site
+3. Right-click any corner of the lot → a pop-up shows coordinates (e.g. `14.580123, 121.045678`)
+4. In the simulator, switch to **Lat,Lon (Google)** mode and paste one pair per line:
+
+```
+14.580100, 121.045600
+14.580100, 121.046200
+14.579500, 121.046200
+14.579500, 121.045600
+```
+
+### Method C — Google Earth Pro *(most precise)*
+1. Open Google Earth Pro (free download from Google)
+2. Use the polygon tool to trace the lot boundary
+3. Right-click each vertex → copy coordinates
+4. Paste into the simulator in Lat,Lon mode
+
+---
+
+## 📐 Sample Inputs
+
+**Local X,Y (meters) — simple rectangle:**
+```
+0,0
+200,0
+200,120
+0,120
+```
+
+**Lat,Lon — Google Maps format:**
+```
+14.580100,121.045600
+14.580100,121.046200
+14.579500,121.046200
+14.579500,121.045600
+```
+
+**Irregular polygon:**
+```
+0,25
+40,0
+180,15
+220,50
+200,145
+90,155
+0,110
+```
+
+---
+
+## 🐍 GeoDataFrame Export — Python Setup
+
+After running the simulation, click the **📄 GeoData** tab to get the generated Python script. To run it:
+
+```bash
+# Install dependencies
+pip install geopandas shapely pandas pyproj fiona
+
+# Or with conda
+conda install -c conda-forge geopandas shapely
+
+# Run the exported script
+python warehouse_geodata.py
+```
+
+**Output files:**
+```
+warehouse_site.geojson   → drag into QGIS or paste into geojson.io
+warehouse_site.gpkg      → GeoPackage with all layers (lot, buildings, yards, ramps, MEP, GH)
+warehouse_site.csv       → CSV with WKT geometry column
+```
+
+**GeoDataFrame layers exported:**
+
+| Layer | Content |
+|---|---|
+| `lot` | Full lot polygon with area, BUAR limit, max GFA |
+| `buildable_zone` | Inset rectangle after setbacks |
+| `building_1..4` | Each building with storeys, footprint, WH GFA, office GFA, total GFA |
+| `yard_1..n` | Truck yards between building pairs |
+| `ramp_1..n` | Straight, U-ramp, or helix footprints |
+| `mep_area` | MEP / utility room rectangle |
+| `guard_house` | Guard house rectangle |
+
+---
+
+## 🔧 Technical Details
+
+| Item | Detail |
+|---|---|
+| Language | HTML + CSS + Vanilla JavaScript (zero frameworks) |
+| Fonts | Google Fonts — Space Mono, Barlow Condensed (CDN) |
+| Maps | Google Maps JavaScript API (loads on demand, no API key required for basic use) |
+| 2D Rendering | HTML5 Canvas API |
+| 3D Rendering | Custom isometric projection on Canvas (no WebGL) |
+| Coordinate Conversion | Haversine formula (lat/lon → local meters) |
+| GeoData | Generated Python code using Shapely + GeoPandas |
+| File Structure | Single self-contained `index.html` (~1,600 lines) |
+| Hosting | GitHub Pages (static, no backend) |
+| Browser Support | Chrome, Firefox, Edge, Safari (any modern browser) |
 
 ---
 
@@ -54,44 +245,45 @@ It's designed for early-stage feasibility studies where speed matters more than 
 
 ```
 /
-└── index.html       # Main simulator (self-contained)
-└── README.md        # This file
+├── index.html    ← Complete simulator (single file, self-contained)
+└── README.md     ← This file
 ```
 
 ---
 
-## 🗺️ How to Get Lot Coordinates from Google Maps
+## 📋 Standards Referenced
 
-You can trace your lot polygon directly from Google Maps and convert the corner points into X,Y coordinates for the simulator.
+| Standard | Description |
+|---|---|
+| BP 957 | Subdivision and Condominium Buyer's Protective Decree (Philippines) |
+| PD 957 | Subdivision and Condominium Regulation |
+| DPWH Guidelines | Department of Public Works and Highways |
+| RROW | Right-of-Way dimensional standards |
+| OSCA / PWD | Accessible facility requirements (handicap parking) |
+| BFP | Bureau of Fire Protection — fire access road ≥ 6m |
 
-### Step-by-step:
+---
 
-1. **Go to [Google Maps](https://maps.google.com)** and find your lot
-2. **Right-click on a corner point** of your lot → click **"Measure distance"**
-3. **Click each corner** of the lot boundary to trace the polygon — Google Maps will show the segment distances (in km or m)
-4. **Note down the distances** between each vertex as your polygon edges
-5. **Convert to X,Y meters** — pick one corner as your origin `0,0`, then use the distances and direction to calculate each subsequent vertex
+## 🚧 Ramp Design Reference
 
-### Example (from aerial measurement):
+| Type | Slope Standard | Min Width | Notes |
+|---|---|---|---|
+| Straight | 1:12 (8.33%) | ≥ 9m one-way · ≥ 12m two-way | 1m rise per 12m run; for 7m floor: 84m run |
+| U-Ramp (semi-circular) | Arms 1:12 · Curve 1:20 | Inner R ≥ 6m · Clear W ≥ 9m | 2-way 18m clear width; matches reference site plan |
+| Cylindrical Helix | ≤ 1:12 along path | Core R ≥ 4m · Lane ≥ 3m | Compact vertical core; 1-way spiral |
 
-The image below shows a sample irregular lot traced on Google Maps with segment distances labeled: <img width="364" height="449" alt="image" src="https://github.com/user-attachments/assets/8d96647d-dfac-4fe0-af33-aa101aac4fd3" />
+---
 
+## 🔄 Changelog
 
-
-> Segment distances visible: **2.29 km → 2.00 km → 0.50 km → 1.50 km → 1.00 km**
-
-Using the bottom vertex as origin `0,0`, you'd work clockwise to derive approximate X,Y coordinates in meters for each corner, then paste them into the simulator's **Lot Polygon** field like this:
-
-```
-0,0
--1000,500
--500,2000
-500,2200
-1500,1800
-1200,800
-```
-
-> 💡 **Tip:** For precise coordinates, you can also use **[Google Earth Pro](https://earth.google.com)** (free) — right-click any point and select *"What's here?"* to get exact lat/long, then use a coordinate converter to get local X,Y in meters.
+| Version | Changes |
+|---|---|
+| **v4.1** | Replaced Mapbox with Google Maps; in-app site picker with click-to-place vertices, right-click undo, address search, polygon preview |
+| **v4.0** | Fire access road (6m) with parking on both sides; perimeter green strip; 2m building green strip; MEP area (≥600m²); guard house (40m²); U-ramp semi-circular shape matching reference plan |
+| **v3.1** | Lat/Lon coordinate input with Haversine auto-conversion; building boundary clamping to lot polygon |
+| **v3.0** | 3 independent ramp types (Straight, Circular, Cylindrical); GeoDataFrame export (Python + GeoJSON); BUAR limit; 4-building support; GeoData tab |
+| **v2.0** | Full parking calculator; BUAR; office mezzanine GFA; compliance engine with pass/fail cards |
+| **v1.0** | Initial release — 2D/3D massing, GFA breakdown, setbacks, preset lot shapes |
 
 ---
 
@@ -99,9 +291,10 @@ Using the bottom vertex as origin `0,0`, you'd work clockwise to derive approxim
 
 **Kenneth Toledo**
 - GitHub: [@kennethtoledodigitals](https://github.com/kennethtoledodigitals)
+- Live Project: [Industrial Warehouse Test-Fit Simulator](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/)
 
 ---
 
 ## 📄 License
 
-This project is open for viewing and personal use. For commercial use or redistribution, please contact the author.
+This project is open for personal and educational use. For commercial use or redistribution, please contact the author.
