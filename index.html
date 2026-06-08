@@ -326,6 +326,9 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
             When done, click <strong style="color:var(--accent)">✓ Use Coords</strong>.
           </div>
           <button class="btn" style="width:200px;margin-top:8px" onclick="initGoogleMap()">Load Google Maps</button>
+          <div id="apiKeyWarning" style="font-size:9px;color:var(--amber);text-align:center;max-width:380px;line-height:1.6;margin-top:8px;background:#1a1200;border:1px solid #3a3000;padding:8px;">
+            ⚠️ <strong>API Key required.</strong> Open this file in a text editor and replace <code style="color:var(--red)">YOUR_API_KEY</code> near line 1387 with your own key from <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent2)">Google Cloud Console</a>. Enable the <em>Maps JavaScript API</em> and <em>Places API</em>.
+          </div>
           <div style="font-size:9px;color:var(--dim);text-align:center;max-width:380px;line-height:1.6;margin-top:4px;">
             💡 <strong style="color:var(--amber)">Alternative:</strong> In Google Maps, right-click any corner of your lot → copy the coordinates shown → paste into the left panel using <em>Lat,Lon (Google)</em> mode.
           </div>
@@ -1379,12 +1382,15 @@ let gmapSearchBox = null;
 function initGoogleMap(){
   // Hide placeholder
   document.getElementById('gmap-placeholder').style.display='none';
+  const w = document.getElementById('apiKeyWarning'); if(w) w.style.display='none';
 
   // Load Google Maps API dynamically (no key needed for basic embed + click)
   if(typeof google === 'undefined'){
     const s = document.createElement('script');
     // Using the Maps Embed approach via public loader — no billing needed for basic JS API
-    s.src = 'https://maps.googleapis.com/maps/api/js?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY&libraries=places&callback=_gmapReady';
+    // ── Replace YOUR_API_KEY with your own key from console.cloud.google.com ──
+    const GMAP_KEY = window.GMAP_API_KEY || 'AIzaSyAzahzNOvn70jiLRBi9u8zSsGRhqQW8F-U';
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAP_KEY}&libraries=places,marker&callback=_gmapReady&loading=async&v=weekly`;
     s.async = true; s.defer = true;
     document.head.appendChild(s);
   } else {
@@ -1444,16 +1450,19 @@ function _gmapReady(){
     }
   });
 
-  // Click to add vertex
+  // Click to add vertex — guarded against dblclick false-fires
+  let _dblPending = false;
   gmap.addListener('click', e => {
+    if(_dblPending) return;
     const lat = e.latLng.lat();
     const lng = e.latLng.lng();
     addMapPoint(lat, lng);
   });
 
-  // Double-click to finish (prevent adding extra point)
+  // Double-click to finish — suppress the stray single-click that fires with it
   gmap.addListener('dblclick', e => {
-    e.stop && e.stop();
+    _dblPending = true;
+    setTimeout(() => { _dblPending = false; }, 300);
   });
 
   // Right-click to undo last
@@ -1473,26 +1482,30 @@ function _gmapReady(){
 function addMapPoint(lat, lng){
   mapPts.push([lat, lng]);
 
-  // Yellow dot marker
-  const marker = new google.maps.Marker({
-    position: {lat, lng},
-    map: gmap,
-    icon: {
-      path: google.maps.SymbolPath.CIRCLE,
-      scale: 6,
-      fillColor: '#e8ff47',
-      fillOpacity: 1,
-      strokeColor: '#0a0c0f',
-      strokeWeight: 2
-    },
-    label: {
-      text: String(mapPts.length),
-      color: '#0a0c0f',
-      fontSize: '9px',
-      fontWeight: 'bold'
-    },
-    zIndex: 10
-  });
+  // Yellow dot marker — AdvancedMarkerElement (v3.56+) with legacy Marker fallback
+  let marker;
+  const AdvMarker = google.maps.marker && google.maps.marker.AdvancedMarkerElement;
+  if(AdvMarker){
+    const pin = document.createElement('div');
+    pin.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#e8ff47;border:2px solid #0a0c0f;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:bold;color:#0a0c0f;font-family:monospace;';
+    pin.textContent = String(mapPts.length);
+    marker = new AdvMarker({ position:{lat,lng}, map:gmap, content:pin, zIndex:10 });
+  } else {
+    marker = new google.maps.Marker({
+      position: {lat, lng},
+      map: gmap,
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 6,
+        fillColor: '#e8ff47',
+        fillOpacity: 1,
+        strokeColor: '#0a0c0f',
+        strokeWeight: 2
+      },
+      label: { text: String(mapPts.length), color: '#0a0c0f', fontSize: '9px', fontWeight: 'bold' },
+      zIndex: 10
+    });
+  }
   gmapMarkers.push(marker);
   updateGmapOverlay();
   updateMapDisplay();
