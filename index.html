@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Industrial Warehouse Test-Fit Simulator v4.1</title>
+<title>Industrial Warehouse Test-Fit Simulator v4.2</title>
 <!-- Google Maps loaded dynamically when map tab opened -->
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
@@ -116,9 +116,10 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 <body>
 <header>
   <div class="logo">TESTFIT <span>//</span> WAREHOUSE</div>
-  <div class="tag">v4.0</div>
+  <div class="tag">v4.2</div>
   <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">Google Maps Picker</div>
-  <div class="tag" style="color:var(--green);border-color:var(--green)">GeoDataFrame Export</div>
+  <div class="tag" style="color:var(--green);border-color:var(--green)">GeoJSON Import</div>
+  <div class="tag" style="color:var(--amber);border-color:var(--amber)">CAD Export</div>
 </header>
 <div class="main">
 <!-- ═══ LEFT ═══ -->
@@ -126,11 +127,14 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 
   <div class="sec">
     <div class="stitle">Lot Polygon</div>
-    <div style="display:flex;gap:4px;margin-bottom:5px;">
+    <div style="display:flex;gap:4px;margin-bottom:5px;flex-wrap:wrap;">
       <button class="btn2" onclick="setMode('xy')" id="mxy" style="border-color:var(--accent);color:var(--accent)">Local X,Y (m)</button>
       <button class="btn2" onclick="setMode('ll')" id="mll">Lat,Lon (Google)</button>
       <button class="btn2" onclick="switchTab('map')" style="margin-left:auto">📍 Pick on Map</button>
+      <button class="btn2" onclick="document.getElementById('geojsonFileInput').click()" style="border-color:var(--green);color:var(--green)">📂 Import GeoJSON</button>
+      <input type="file" id="geojsonFileInput" accept=".geojson,.json" style="display:none" onchange="importGeoJSON(event)">
     </div>
+    <div id="geojsonStatus" style="display:none;font-size:9px;padding:4px 6px;margin-bottom:4px;border:1px solid var(--green);color:var(--green);background:#0a2010;"></div>
     <textarea id="coordInput" rows="6" placeholder="0,0&#10;200,0&#10;200,120&#10;0,120"></textarea>
     <div id="coordHint" class="subtitle" style="margin-top:4px">One vertex per line: X,Y (meters). Min 3 pts.</div>
     <div id="okMsg" class="okm"></div>
@@ -276,6 +280,7 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
           <span><span class="ld" style="background:#0a1520;border:1px solid #47c8ff"></span>Fire Road</span>
           <span><span class="ld" style="background:#1a1020;border:1px solid #b47fff"></span>MEP</span>
         </div>
+        <button class="btn2" onclick="exportDXF()" style="border-color:var(--amber);color:var(--amber);margin-left:auto;font-size:8px;padding:3px 8px;">⬇ Export CAD (.dxf)</button>
         <div class="ti" id="scaleInfo">—</div>
       </div>
       <canvas id="c2d"></canvas>
@@ -1323,6 +1328,7 @@ gdf_buildings.to_file("warehouse_site.gpkg", layer="buildings", driver="GPKG")
       <div class="ctab" onclick="ctab('gj',this)">GeoJSON</div>
       <div class="ctab" onclick="ctab('ct',this)">Coord Table</div>
       <div class="ctab" onclick="ctab('inst',this)">Install</div>
+      <div class="ctab" onclick="exportDXF()" style="border-color:var(--amber);color:var(--amber);">⬇ DXF/CAD</div>
     </div>
     <div id="ct-py">
       <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center;">
@@ -1404,7 +1410,7 @@ function _gmapReady(){
   gmap = new google.maps.Map(document.getElementById('gmap'), {
     center: {lat: 14.58, lng: 121.04},
     zoom: 15,
-    mapTypeId: 'satellite',
+    mapTypeId: 'hybrid',
     mapTypeControl: true,
     mapTypeControlOptions: {
       mapTypeIds: ['satellite','hybrid','roadmap','terrain'],
@@ -1415,25 +1421,29 @@ function _gmapReady(){
     fullscreenControl: true,
     zoomControl: true,
     tilt: 0,
-    styles: []
+    styles: [],
+    isFractionalZoomEnabled: false
   });
 
   // Polyline to show the in-progress lot outline
   gmapPolyline = new google.maps.Polyline({
     map: gmap,
     strokeColor: '#e8ff47',
-    strokeWeight: 2,
-    strokeOpacity: 0.9
+    strokeWeight: 2.5,
+    strokeOpacity: 1.0,
+    zIndex: 5
   });
 
-  // Closed polygon shown when ≥3 points
+  // Closed polygon shown when ≥3 points — transparent fill so satellite stays visible
   gmapPolygon = new google.maps.Polygon({
     map: gmap,
     strokeColor: '#e8ff47',
-    strokeWeight: 2,
+    strokeWeight: 2.5,
+    strokeOpacity: 1.0,
     fillColor: '#e8ff47',
-    fillOpacity: 0.12,
-    clickable: false
+    fillOpacity: 0.08,
+    clickable: false,
+    zIndex: 4
   });
 
   // Search box wired to the text input
@@ -1570,8 +1580,259 @@ function useMapCoords(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TABS / DRAG / RESIZE
+// GEOJSON IMPORT
 // ═══════════════════════════════════════════════════════════════
+function importGeoJSON(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('geojsonStatus');
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const gj = JSON.parse(e.target.result);
+      let coords = null;
+      let layerName = file.name;
+
+      // Support FeatureCollection, Feature, or raw Geometry
+      let features = [];
+      if(gj.type === 'FeatureCollection') features = gj.features || [];
+      else if(gj.type === 'Feature') features = [gj];
+      else if(gj.type === 'Polygon' || gj.type === 'MultiPolygon') features = [{geometry: gj, properties:{}}];
+
+      // Find first Polygon or MultiPolygon geometry
+      for(const feat of features){
+        const geom = feat.geometry || feat;
+        if(!geom) continue;
+        if(geom.type === 'Polygon'){
+          coords = geom.coordinates[0]; // outer ring
+          if(feat.properties && feat.properties.name) layerName = feat.properties.name;
+          break;
+        } else if(geom.type === 'MultiPolygon'){
+          coords = geom.coordinates[0][0]; // first ring of first polygon
+          break;
+        }
+      }
+
+      if(!coords || coords.length < 3){
+        throw new Error('No valid Polygon geometry found in file.');
+      }
+
+      // Remove closing duplicate point if present
+      const first = coords[0], last = coords[coords.length-1];
+      if(first[0]===last[0] && first[1]===last[1]) coords = coords.slice(0,-1);
+
+      // Detect coordinate type: geographic [lon,lat] or projected [x,y]
+      const isGeo = Math.abs(coords[0][0]) <= 180 && Math.abs(coords[0][1]) <= 90;
+
+      let lines;
+      if(isGeo){
+        // GeoJSON spec: [longitude, latitude]
+        lines = coords.map(c => `${c[1].toFixed(6)},${c[0].toFixed(6)}`).join('\n');
+        setMode('ll');
+        statusEl.textContent = `✓ Imported "${layerName}" — ${coords.length} vertices (Lat/Lon). Mode set to Lat,Lon.`;
+      } else {
+        // Projected coordinates (meters)
+        lines = coords.map(c => `${c[0].toFixed(2)},${c[1].toFixed(2)}`).join('\n');
+        setMode('xy');
+        statusEl.textContent = `✓ Imported "${layerName}" — ${coords.length} vertices (projected meters). Mode set to X,Y.`;
+      }
+
+      document.getElementById('coordInput').value = lines;
+      statusEl.style.display = 'block';
+      statusEl.style.borderColor = 'var(--green)';
+      statusEl.style.color = 'var(--green)';
+      statusEl.style.background = '#0a2010';
+      runSim();
+    } catch(err){
+      statusEl.textContent = '⚠ GeoJSON Error: ' + err.message;
+      statusEl.style.display = 'block';
+      statusEl.style.borderColor = 'var(--red)';
+      statusEl.style.color = 'var(--red)';
+      statusEl.style.background = '#2a1010';
+    }
+    // Reset file input so same file can be re-imported
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DXF CAD EXPORT
+// ═══════════════════════════════════════════════════════════════
+function exportDXF(){
+  if(!R){ alert('Run simulation first.'); return; }
+  const{pts,buildings,yards,sramps,uRamp,cylRamp,mepRect,ghRect,bz,b,
+        parkingRows,periGreen,fireRoad,lotArea,totGFA,buarActual,plinthPct}=R;
+
+  const lines = [];
+
+  // ── DXF Header ──────────────────────────────────────────────
+  lines.push('0','SECTION','2','HEADER',
+    '9','$ACADVER','1','AC1015',
+    '9','$INSUNITS','70','4', // 4 = meters
+    '9','$EXTMIN','10',b.minX.toFixed(3),'20',b.minY.toFixed(3),'30','0.000',
+    '9','$EXTMAX','10',b.maxX.toFixed(3),'20',b.maxY.toFixed(3),'30','0.000',
+    '0','ENDSEC');
+
+  // ── Tables section with layers ───────────────────────────────
+  lines.push('0','SECTION','2','TABLES','0','TABLE','2','LAYER','70','20');
+  const layerDefs = [
+    ['LOT_BOUNDARY',     1,  'Continuous'],
+    ['BUILDINGS',        4,  'Continuous'],
+    ['TRUCK_YARDS',      3,  'Continuous'],
+    ['STR_RAMPS',        6,  'Continuous'],
+    ['U_RAMP',           5,  'Continuous'],
+    ['HELIX_RAMP',       4,  'Continuous'],
+    ['MEP_AREA',         6,  'Continuous'],
+    ['GUARD_HOUSE',      2,  'Continuous'],
+    ['PERIMETER_GREEN',  3,  'Continuous'],
+    ['FIRE_ROAD',        5,  'Continuous'],
+    ['PARKING',          2,  'Continuous'],
+    ['BUILDABLE_ZONE',   8,  'DASHED'],
+    ['DIMENSIONS',       7,  'Continuous'],
+    ['ANNOTATIONS',      7,  'Continuous'],
+  ];
+  layerDefs.forEach(([name,color,ltype])=>{
+    lines.push('0','LAYER','2',name,'70','0','62',String(color),'6',ltype);
+  });
+  lines.push('0','ENDTAB','0','ENDSEC');
+
+  // ── Entities section ─────────────────────────────────────────
+  lines.push('0','SECTION','2','ENTITIES');
+
+  // Helper: write a closed LWPOLYLINE
+  function lwpoly(pts2d, layer, closed=true){
+    lines.push('0','LWPOLYLINE','8',layer,'90',String(pts2d.length),'70',closed?'1':'0');
+    pts2d.forEach(([x,y])=>{ lines.push('10',x.toFixed(4),'20',y.toFixed(4)); });
+  }
+
+  // Helper: write a rectangle as LWPOLYLINE
+  function rect(x,y,w,h,layer){
+    lwpoly([[x,y],[x+w,y],[x+w,y+h],[x,y+h]], layer);
+  }
+
+  // Helper: TEXT entity
+  function text(x,y,h,str,layer){
+    lines.push('0','TEXT','8',layer,'10',x.toFixed(3),'20',y.toFixed(3),'30','0',
+               '40',h.toFixed(3),'1',str);
+  }
+
+  // Helper: CIRCLE
+  function circle(cx,cy,r,layer){
+    lines.push('0','CIRCLE','8',layer,'10',cx.toFixed(4),'20',cy.toFixed(4),'30','0','40',r.toFixed(4));
+  }
+
+  // Helper: LINE
+  function line(x1,y1,x2,y2,layer){
+    lines.push('0','LINE','8',layer,'10',x1.toFixed(4),'20',y1.toFixed(4),'30','0',
+               '11',x2.toFixed(4),'21',y2.toFixed(4),'31','0');
+  }
+
+  // Lot boundary
+  lwpoly(pts, 'LOT_BOUNDARY');
+
+  // Buildable zone (dashed)
+  rect(bz.x, bz.y, bz.w, bz.h, 'BUILDABLE_ZONE');
+
+  // Perimeter green strip — represented as offset annotation lines
+  // (draw inner boundary of green zone)
+  const greenInner = periGreen;
+  rect(b.minX+greenInner, b.minY+greenInner,
+       b.maxX-b.minX-greenInner*2, b.maxY-b.minY-greenInner*2, 'PERIMETER_GREEN');
+
+  // Fire road inner boundary
+  const frOff = periGreen+fireRoad;
+  rect(b.minX+frOff, b.minY+frOff,
+       b.maxX-b.minX-frOff*2, b.maxY-b.minY-frOff*2, 'FIRE_ROAD');
+
+  // Parking rows
+  Object.values(parkingRows).forEach(pr=>rect(pr.x,pr.y,pr.w,pr.h,'PARKING'));
+
+  // Buildings
+  buildings.forEach(bd=>{
+    rect(bd.x, bd.y, bd.w, bd.h, 'BUILDINGS');
+    text(bd.x+bd.w/2, bd.y+bd.h/2+1, 3, `BLDG ${bd.id} · ${bd.storeys}F`, 'ANNOTATIONS');
+    text(bd.x+bd.w/2, bd.y+bd.h/2-3, 2, `${bd.fp.toFixed(0)}m2/flr · GFA ${bd.totGFA.toFixed(0)}m2`, 'ANNOTATIONS');
+  });
+
+  // Yards
+  yards.forEach(y=>{
+    rect(y.x, y.y, y.w, y.h, 'TRUCK_YARDS');
+    text(y.x+y.w/2, y.y+y.h/2, 2.5, y.label, 'ANNOTATIONS');
+  });
+
+  // Straight ramps
+  sramps.forEach(r=>{
+    rect(r.x, r.y, r.w, r.h, 'STR_RAMPS');
+    // Hatch lines
+    for(let i=0; i<r.h; i+=2) line(r.x, r.y+i, r.x+r.w, r.y+i, 'STR_RAMPS');
+    text(r.x+r.w/2, r.y+r.h/2, 1.8, `STR ${r.slopeStr}`, 'ANNOTATIONS');
+  });
+
+  // U-ramp (approximated as two rectangles + circles for the arcs)
+  if(uRamp){
+    const ur = uRamp;
+    // Left arm
+    rect(ur.x, ur.y, ur.outerR-ur.innerR, ur.strL, 'U_RAMP');
+    // Right arm
+    rect(ur.x+ur.outerR+ur.innerR, ur.y, ur.outerR-ur.innerR, ur.strL, 'U_RAMP');
+    // Outer arc (semi-circle) — represented as circle
+    circle(ur.x+ur.outerR, ur.y+ur.strL, ur.outerR, 'U_RAMP');
+    // Inner arc
+    circle(ur.x+ur.outerR, ur.y+ur.strL, ur.innerR, 'U_RAMP');
+    text(ur.x+ur.outerR, ur.y+ur.strL+ur.outerR*0.4, 2, 'U-RAMP', 'ANNOTATIONS');
+    text(ur.x+ur.outerR, ur.y+ur.strL+ur.outerR*0.4-3, 1.5, `Ri=${ur.innerR}m Ro=${ur.outerR}m`, 'ANNOTATIONS');
+  }
+
+  // Helix ramp
+  if(cylRamp){
+    circle(cylRamp.cx, cylRamp.cy, cylRamp.outerR, 'HELIX_RAMP');
+    circle(cylRamp.cx, cylRamp.cy, cylRamp.coreR, 'HELIX_RAMP');
+    text(cylRamp.cx, cylRamp.cy+0.5, 2, `CYL ${cylRamp.turns}T`, 'ANNOTATIONS');
+  }
+
+  // MEP area
+  rect(mepRect.x, mepRect.y, mepRect.w, mepRect.h, 'MEP_AREA');
+  text(mepRect.x+mepRect.w/2, mepRect.y+mepRect.h/2, 2, `MEP ${R.mepAreaTarget}m2`, 'ANNOTATIONS');
+
+  // Guard house
+  rect(ghRect.x, ghRect.y, ghRect.w, ghRect.h, 'GUARD_HOUSE');
+  text(ghRect.x+ghRect.w/2, ghRect.y+ghRect.h/2, 1.8, 'GH', 'ANNOTATIONS');
+
+  // Dimension annotations (horizontal)
+  const dimY = b.minY - 8;
+  const lotW = b.maxX - b.minX;
+  const lotH = b.maxY - b.minY;
+  line(b.minX, dimY, b.maxX, dimY, 'DIMENSIONS');
+  line(b.minX, dimY-2, b.minX, dimY+2, 'DIMENSIONS');
+  line(b.maxX, dimY-2, b.maxX, dimY+2, 'DIMENSIONS');
+  text(b.minX+lotW/2, dimY-4, 2.5, `${lotW.toFixed(1)}m`, 'DIMENSIONS');
+  // Vertical
+  const dimX = b.maxX + 8;
+  line(dimX, b.minY, dimX, b.maxY, 'DIMENSIONS');
+  line(dimX-2, b.minY, dimX+2, b.minY, 'DIMENSIONS');
+  line(dimX-2, b.maxY, dimX+2, b.maxY, 'DIMENSIONS');
+  text(dimX+2, b.minY+lotH/2, 2.5, `${lotH.toFixed(1)}m`, 'DIMENSIONS');
+
+  // Title block annotation
+  text(b.minX, b.minY-16, 3.5, 'WAREHOUSE TEST-FIT PLAN — IWTFS v4.2', 'ANNOTATIONS');
+  text(b.minX, b.minY-20, 2, `Lot ${lotArea.toFixed(0)}m2  |  GFA ${totGFA.toFixed(0)}m2  |  BUAR ${buarActual.toFixed(3)}  |  Plinth ${plinthPct.toFixed(1)}%`, 'ANNOTATIONS');
+  text(b.minX, b.minY-24, 2, `Scale 1:1 (meters)  |  All dims per BP 957/DPWH/RROW`, 'ANNOTATIONS');
+
+  lines.push('0','ENDSEC','0','EOF');
+
+  // Download
+  const dxf = lines.join('\n');
+  const blob = new Blob([dxf], {type:'application/dxf'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'warehouse_testfit.dxf';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
 function switchTab(id){
   const ids=['plan2d','view3d','gfa','parking','compliance','geodata','map'];
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',ids[i]===id));
