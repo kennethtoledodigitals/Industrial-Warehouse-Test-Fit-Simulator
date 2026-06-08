@@ -1415,7 +1415,7 @@ function initGoogleMap(){
     const s = document.createElement('script');
     // Using the Maps Embed approach via public loader — no billing needed for basic JS API
     // ── Replace YOUR_API_KEY with your own key from console.cloud.google.com ──
-    const GMAP_KEY = window.GMAP_API_KEY || 'AIzaSyAV3KoiqCPxaYEiL1ymBZTC-2ykgG1gOw0';
+    const GMAP_KEY = window.GMAP_API_KEY || 'AIzaSyAV3KoiqCPxaYEiL1ymBZTC-2ykgG1gOw0-U';
     s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAP_KEY}&libraries=places,marker&callback=_gmapReady&loading=async&v=beta`;
     s.async = true; s.defer = true;
     document.head.appendChild(s);
