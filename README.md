@@ -1,8 +1,8 @@
-[README.md](https://github.com/user-attachments/files/28634174/README.md)
+[README (3).md](https://github.com/user-attachments/files/28699753/README.3.md)
 # 🏭 Industrial Warehouse Test-Fit Simulator (IWTFS)
-### Design Simulator v4.1 — Browser-Based, Zero Installation
+### Design Simulator v4.2 — Browser-Based, Zero Installation
 
-> A fully browser-based industrial warehouse test-fit tool for architects, planners, and developers. Trace any lot shape using Google Maps, configure buildings and ramps, and instantly generate a compliant site layout with GFA breakdown, parking schedule, and GeoDataFrame export — no software required.
+> A fully browser-based industrial warehouse test-fit tool for architects, planners, and developers. Trace any lot shape using Google Maps or import a GeoJSON file, configure buildings and ramps, and instantly generate a compliant site layout with GFA breakdown, parking schedule, GeoDataFrame export, and CAD/DXF output — no software required.
 
 🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/)
 
@@ -15,12 +15,22 @@
 - Click on map corners to trace your lot boundary — numbered vertices placed automatically
 - Undo last point, clear all, or search by address
 - Hit **✓ Use Coords** to push coordinates directly into the simulator
+- Polygon overlay uses a transparent fill so the satellite imagery stays fully visible underneath
 - Alternative: paste `Lat,Lon` pairs copied from Google Maps right-click → "What's here?"
+
+### 📂 GeoJSON Import *(new in v4.2)*
+- Click **📂 Import GeoJSON** in the Lot Polygon section to load any `.geojson` or `.json` file
+- Supports `FeatureCollection`, `Feature`, `Polygon`, and `MultiPolygon` geometry types
+- Auto-detects coordinate system — geographic `[lon, lat]` (GeoJSON spec) or projected meters
+- Automatically sets coordinate mode (`Lat,Lon` or `X,Y`) and runs the simulation immediately
+- Status message confirms filename, vertex count, and detected mode
+- Compatible with exports from QGIS, ArcGIS, geojson.io, Google Earth, and any GIS tool
 
 ### 📐 Coordinate Input Modes
 - **Local X,Y (meters)** — manual entry, ideal for preset shapes
 - **Lat,Lon (Google Maps)** — auto-converted to local metric using Haversine projection
-- Preset lot shapes: Rectangle, L-Shape, Trapezoid, Irregular, Large Site
+- **GeoJSON file import** — drag-and-drop via the Import button
+- Preset lot shapes: Rectangle, L-Shape, Trapezoid, Irregular, Sample LatLon
 
 ### 🏗️ Building Layout Engine
 - **1–4 buildings** stacked with shared truck yards sandwiched between pairs
@@ -68,13 +78,13 @@ Stall size options: 2.5 × 5.0 m (Standard) or 2.7 × 5.0 m (Wide)
 
 | Tab | Contents |
 |---|---|
-| **2D Site Plan** | Canvas plan view: lot boundary, green strips, fire road, perimeter parking, buildings, truck yards, all ramp types, MEP room, guard house, scale bar, vertex labels |
+| **2D Site Plan** | Canvas plan view: lot boundary, green strips, fire road, perimeter parking, buildings, truck yards, all ramp types, MEP room, guard house, scale bar, vertex labels. Includes **⬇ Export CAD (.dxf)** button. |
 | **3D Massing** | Interactive isometric — drag to rotate, scroll to zoom, floor division lines rendered |
 | **GFA Breakdown** | Per-building per-floor table: warehouse GFA, office mezzanine GFA, ramp footprints with formulas (W×L, π(R²out − R²in)) |
 | **Parking** | Full parking schedule with stall dimensions, area subtotals, 40% aisle allowance, site notes |
 | **Compliance** | Pass/fail summary cards + detailed rule-by-rule checklist |
-| **📄 GeoData** | Python/GeoPandas code, GeoJSON download, coordinate table, install guide |
-| **📍 Google Maps** | Interactive satellite site picker with click-to-place vertices |
+| **📄 GeoData** | Python/GeoPandas code, GeoJSON download, coordinate table, install guide, and DXF/CAD export shortcut |
+| **📍 Google Maps** | Interactive satellite site picker with click-to-place vertices and transparent polygon overlay |
 
 ### 🗄️ GeoDataFrame Export
 - Complete **Python script** (Shapely + GeoPandas): lot polygon, buildable zone, buildings, yards, ramps, MEP area, and guard house — each as a separate named GeoDataFrame layer
@@ -82,6 +92,30 @@ Stall size options: 2.5 × 5.0 m (Standard) or 2.7 × 5.0 m (Wide)
 - **GeoPackage** (`.gpkg`) — all layers in one file
 - CRS: `EPSG:32651` (WGS84 / UTM Zone 51N — Philippines); easy to change for other regions
 - In-browser **Copy** and **Download** buttons for both `.py` and `.geojson`
+
+### 📐 CAD / DXF Export *(new in v4.2)*
+Click **⬇ Export CAD (.dxf)** in the 2D Site Plan toolbar (or via the GeoData tab) to download a fully layered AutoCAD DXF file.
+
+**Named layers exported:**
+
+| Layer | Content |
+|---|---|
+| `LOT_BOUNDARY` | Full lot polygon outline |
+| `BUILDINGS` | All building footprints |
+| `TRUCK_YARDS` | Truck yard rectangles |
+| `STR_RAMPS` | Straight ramp footprints with hatch lines |
+| `U_RAMP` | U-ramp arms and arc geometry |
+| `HELIX_RAMP` | Cylindrical helix ramp circles |
+| `MEP_AREA` | MEP / utility room rectangle |
+| `GUARD_HOUSE` | Guard house rectangle |
+| `PERIMETER_GREEN` | Inner boundary of perimeter green strip |
+| `FIRE_ROAD` | Fire access road inner boundary |
+| `PARKING` | Perimeter parking row rectangles |
+| `BUILDABLE_ZONE` | Dashed buildable zone rectangle |
+| `DIMENSIONS` | Dimension lines with lot width and height |
+| `ANNOTATIONS` | All text labels, building IDs, GFA values, and title block |
+
+Compatible with AutoCAD, QGIS, DraftSight, FreeCAD, LibreCAD, BricsCAD, and any DXF-capable application. Coordinates are in meters (DXF `INSUNITS = 4`).
 
 ### ✅ Compliance Engine
 Auto-checks every simulation against:
@@ -136,7 +170,12 @@ xdg-open index.html      # Linux
 3. Navigate to your site → click each lot corner to place a vertex
 4. Click **✓ Use Coords** — the simulation runs automatically
 
-### Method B — Google Maps Right-Click
+### Method B — GeoJSON Import *(fastest for GIS users)*
+1. Export your lot polygon from QGIS, ArcGIS, or geojson.io as a `.geojson` file
+2. In the simulator, click **📂 Import GeoJSON** in the Lot Polygon section
+3. Select your file — coordinates are imported and the simulation runs automatically
+
+### Method C — Google Maps Right-Click
 1. Go to [maps.google.com](https://maps.google.com)
 2. Navigate to your site
 3. Right-click any corner of the lot → a pop-up shows coordinates (e.g. `14.580123, 121.045678`)
@@ -149,11 +188,11 @@ xdg-open index.html      # Linux
 14.579500, 121.045600
 ```
 
-### Method C — Google Earth Pro *(most precise)*
+### Method D — Google Earth Pro *(most precise)*
 1. Open Google Earth Pro (free download from Google)
 2. Use the polygon tool to trace the lot boundary
 3. Right-click each vertex → copy coordinates
-4. Paste into the simulator in Lat,Lon mode
+4. Paste into the simulator in Lat,Lon mode, or export as KML → convert to GeoJSON → import directly
 
 ---
 
@@ -186,6 +225,38 @@ xdg-open index.html      # Linux
 0,110
 ```
 
+**GeoJSON import — example file structure:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": { "name": "My Lot" },
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[
+        [121.0456, 14.5801],
+        [121.0462, 14.5801],
+        [121.0462, 14.5795],
+        [121.0456, 14.5795],
+        [121.0456, 14.5801]
+      ]]
+    }
+  }]
+}
+```
+
+---
+
+## 📐 CAD Export Workflow
+
+1. Run the simulation with your lot polygon and building config
+2. Click **⬇ Export CAD (.dxf)** in the **2D Site Plan** toolbar
+3. Open `warehouse_testfit.dxf` in your CAD application
+4. Each element is on its own named layer — toggle visibility, adjust line weights, or add your own annotations on top
+
+**Tip:** In AutoCAD or BricsCAD, use `ZOOM → Extents` after opening to fit the drawing to screen. Units are in meters.
+
 ---
 
 ## 🐍 GeoDataFrame Export — Python Setup
@@ -207,7 +278,6 @@ python warehouse_geodata.py
 ```
 warehouse_site.geojson   → drag into QGIS or paste into geojson.io
 warehouse_site.gpkg      → GeoPackage with all layers (lot, buildings, yards, ramps, MEP, GH)
-warehouse_site.csv       → CSV with WKT geometry column
 ```
 
 **GeoDataFrame layers exported:**
@@ -230,12 +300,14 @@ warehouse_site.csv       → CSV with WKT geometry column
 |---|---|
 | Language | HTML + CSS + Vanilla JavaScript (zero frameworks) |
 | Fonts | Google Fonts — Space Mono, Barlow Condensed (CDN) |
-| Maps | Google Maps JavaScript API (loads on demand, no API key required for basic use) |
+| Maps | Google Maps JavaScript API (loads on demand) |
 | 2D Rendering | HTML5 Canvas API |
 | 3D Rendering | Custom isometric projection on Canvas (no WebGL) |
 | Coordinate Conversion | Haversine formula (lat/lon → local meters) |
+| GeoJSON Import | Native FileReader API — no server, no upload |
+| CAD Export | DXF R2000 (AC1015) generated client-side — no server |
 | GeoData | Generated Python code using Shapely + GeoPandas |
-| File Structure | Single self-contained `index.html` (~1,600 lines) |
+| File Structure | Single self-contained `index.html` (~1,870 lines) |
 | Hosting | GitHub Pages (static, no backend) |
 | Browser Support | Chrome, Firefox, Edge, Safari (any modern browser) |
 
@@ -253,8 +325,7 @@ warehouse_site.csv       → CSV with WKT geometry column
 
 ## 📋 Standards Referenced
 
-| Standard | Description |
-Malaysia Standards - Johor Bahru Malaysia - Industrial Buildings
+Malaysia Standards — Johor Bahru Malaysia — Industrial Buildings
 
 ---
 
@@ -272,6 +343,7 @@ Malaysia Standards - Johor Bahru Malaysia - Industrial Buildings
 
 | Version | Changes |
 |---|---|
+| **v4.2** | GeoJSON file import (auto-detects coordinate type, supports FeatureCollection/Feature/Polygon/MultiPolygon); CAD/DXF export with 14 named layers, dimension lines, and title block; fixed Google Maps polygon overlay blocking satellite imagery; map default changed to hybrid mode |
 | **v4.1** | Replaced Mapbox with Google Maps; in-app site picker with click-to-place vertices, right-click undo, address search, polygon preview |
 | **v4.0** | Fire access road (6m) with parking on both sides; perimeter green strip; 2m building green strip; MEP area (≥600m²); guard house (40m²); U-ramp semi-circular shape matching reference plan |
 | **v3.1** | Lat/Lon coordinate input with Haversine auto-conversion; building boundary clamping to lot polygon |
