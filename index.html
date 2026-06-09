@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Industrial Warehouse Test-Fit Simulator v4.2</title>
 <!-- Google Maps loaded dynamically when map tab opened -->
+<!-- Extended Component Library for gmp-map, gmpx-place-picker, gmp-advanced-marker -->
+<script async defer src="https://ajax.googleapis.com/ajax/libs/extended-component-library/0.6.11/index.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
 :root{
@@ -103,8 +105,24 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 .ctabs{display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid var(--border);}
 .ctab{font-size:8px;letter-spacing:1px;text-transform:uppercase;padding:4px 10px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;transition:all .12s;}
 .ctab.active{color:var(--accent2);border-bottom-color:var(--accent2);}
-::-webkit-scrollbar{width:4px;height:4px;}::-webkit-scrollbar-track{background:var(--bg);}
-::-webkit-scrollbar-thumb{background:var(--border);}
+/* gmpx place-picker dark theme overrides */
+gmpx-place-picker{
+  --gmpx-color-surface:#0a0c0f;
+  --gmpx-color-on-surface:var(--text);
+  --gmpx-color-on-surface-variant:var(--dim);
+  --gmpx-color-primary:var(--accent);
+  --gmpx-color-outline:var(--border);
+  --gmpx-font-family-base:'Space Mono',monospace;
+  --gmpx-font-size-base:10px;
+  width:100%;
+}
+/* InfoWindow dark override */
+.gm-style .gm-style-iw-c{background:var(--panel)!important;color:var(--text)!important;border:1px solid var(--border)!important;box-shadow:0 2px 12px rgba(0,0,0,.6)!important;}
+.gm-style .gm-style-iw-d{overflow:hidden!important;}
+.gm-style .gm-style-iw-t::after{background:var(--panel)!important;}
+.gm-style-iw strong{color:var(--accent);}
+.gm-style-iw span{color:var(--dim);font-size:9px;}
+.gm-ui-hover-effect>span{background:var(--dim)!important;}
 .pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;}
 .pkc{background:var(--panel);border:1px solid var(--border);padding:10px;}
 .pkt{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-bottom:2px;}
@@ -308,7 +326,7 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
           <button class="btn3" onclick="useMapCoords()">✓ Use Coords</button>
         </div>
         <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px;margin-left:10px;">
-          <input id="mapSearch" type="text" placeholder="Search address or place…" style="font-size:10px;padding:5px 8px;background:var(--bg);border:1px solid var(--border);color:var(--text);width:100%">
+          <gmpx-place-picker id="placePicker" placeholder="Search address or place…"></gmpx-place-picker>
           <div style="font-size:8px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-top:2px">Picked vertices (Lat, Lon):</div>
           <div id="mapCoordsDisplay" class="map-coords-display">No points yet. Click map to start.</div>
         </div>
@@ -321,6 +339,8 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
       </div>
       <div id="gmap-container" style="flex:1;position:relative;">
         <div id="gmap" style="width:100%;height:100%;"></div>
+        <!-- Search result marker (used by gmpx-place-picker via init()) -->
+        <gmp-advanced-marker id="searchResultMarker" style="display:none;"></gmp-advanced-marker>
         <div id="gmap-placeholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:var(--bg);position:absolute;top:0;left:0;">
           <div style="font-size:32px">🗺️</div>
           <div style="font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;letter-spacing:3px;color:var(--accent)">GOOGLE MAPS SITE PICKER</div>
@@ -1396,7 +1416,7 @@ function initGoogleMap(){
     // Using the Maps Embed approach via public loader — no billing needed for basic JS API
     // ── Replace YOUR_API_KEY with your own key from console.cloud.google.com ──
     const GMAP_KEY = window.GMAP_API_KEY || 'AIzaSyAzahzNOvn70jiLRBi9u8zSsGRhqQW8F-U';
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAP_KEY}&libraries=places,marker&callback=_gmapReady&loading=async&v=weekly`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAP_KEY}&libraries=places,marker&callback=_gmapReady&loading=async&v=beta`;
     s.async = true; s.defer = true;
     document.head.appendChild(s);
   } else {
@@ -1446,19 +1466,8 @@ function _gmapReady(){
     zIndex: 4
   });
 
-  // Search box wired to the text input
-  const input = document.getElementById('mapSearch');
-  const searchBox = new google.maps.places.SearchBox(input);
-  gmap.addListener('bounds_changed', () => searchBox.setBounds(gmap.getBounds()));
-  searchBox.addListener('places_changed', () => {
-    const places = searchBox.getPlaces();
-    if(!places || places.length === 0) return;
-    const place = places[0];
-    if(place.geometry && place.geometry.location){
-      gmap.setCenter(place.geometry.location);
-      gmap.setZoom(17);
-    }
-  });
+  // Wire up the Extended Component Library place picker + advanced marker
+  initPlacePicker();
 
   // Click to add vertex — guarded against dblclick false-fires
   let _dblPending = false;
@@ -1487,6 +1496,89 @@ function _gmapReady(){
       gmap.setZoom(17);
     }, () => {});
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXTENDED COMPONENT LIBRARY — place picker + advanced marker
+// Integrates the gmpx-place-picker web component with the map.
+// Called from _gmapReady() once the Maps JS API is ready.
+// ═══════════════════════════════════════════════════════════════
+async function initPlacePicker(){
+  // Wait for the web components to be defined by the ECL script
+  if(customElements && customElements.whenDefined){
+    await Promise.all([
+      customElements.whenDefined('gmpx-place-picker').catch(()=>{}),
+      customElements.whenDefined('gmp-advanced-marker').catch(()=>{})
+    ]);
+  }
+
+  const placePicker = document.getElementById('placePicker');
+  const markerEl    = document.getElementById('searchResultMarker');
+  const infowindow  = new google.maps.InfoWindow();
+
+  // Disable the default map type control (we handle it ourselves)
+  if(gmap) gmap.setOptions({ mapTypeControl: true });
+
+  // Pin marker for the search result — use AdvancedMarkerElement attached to innerMap
+  let searchMarker = null;
+  const AdvMarker = google.maps.marker && google.maps.marker.AdvancedMarkerElement;
+
+  if(!placePicker) return; // component not in DOM yet
+
+  placePicker.addEventListener('gmpx-placechange', () => {
+    const place = placePicker.value;
+
+    // Clear previous search marker
+    if(searchMarker){ searchMarker.setMap(null); searchMarker = null; }
+    infowindow.close();
+
+    if(!place || !place.location){
+      const name = place ? place.name : '(unknown)';
+      window.alert("No details available for input: '" + name + "'");
+      return;
+    }
+
+    // Fly to place
+    if(place.viewport){
+      gmap.fitBounds(place.viewport);
+    } else {
+      gmap.setCenter(place.location);
+      gmap.setZoom(17);
+    }
+
+    // Place a distinct cyan marker at the search result
+    if(AdvMarker){
+      const pin = document.createElement('div');
+      pin.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#47c8ff;border:2px solid #0a0c0f;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer;';
+      pin.textContent = '📍';
+      searchMarker = new AdvMarker({ position: place.location, map: gmap, content: pin, zIndex: 20 });
+    } else {
+      searchMarker = new google.maps.Marker({
+        position: place.location,
+        map: gmap,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: '#47c8ff',
+          fillOpacity: 1,
+          strokeColor: '#0a0c0f',
+          strokeWeight: 2
+        },
+        zIndex: 20
+      });
+    }
+
+    // Show info window with place name + address
+    const displayName    = place.displayName    || place.name            || '';
+    const formattedAddr  = place.formattedAddress|| place.formatted_address || '';
+    infowindow.setContent(
+      `<div style="font-family:'Space Mono',monospace;font-size:10px;line-height:1.6;max-width:220px;">
+         <strong style="color:var(--accent,#e8ff47)">${displayName}</strong><br>
+         <span style="color:#888;font-size:9px;">${formattedAddr}</span>
+       </div>`
+    );
+    infowindow.open(gmap, searchMarker);
+  });
 }
 
 function addMapPoint(lat, lng){
@@ -1863,6 +1955,16 @@ window.addEventListener('resize',()=>{draw2D();draw3D();});
 // ═══════════════════════════════════════════════════════════════
 document.getElementById('coordInput').value=PRESETS.rect;
 runSim();
+
+// Extended Component Library init — fires after DOM is ready.
+// If the map tab has already been opened and _gmapReady() has run,
+// initPlacePicker() will be called directly from there. This listener
+// ensures it also runs if the ECL script finishes loading after that.
+document.addEventListener('DOMContentLoaded', () => {
+  // Nothing to do here synchronously — initPlacePicker() is called
+  // from _gmapReady() once the Maps JS API is fully loaded.
+  // The async/await inside initPlacePicker() handles the ECL timing.
+});
 </script>
 </body>
 </html>
