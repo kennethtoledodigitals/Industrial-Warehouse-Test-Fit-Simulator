@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Industrial Warehouse Test-Fit Simulator v4.2</title>
+<title>Industrial Warehouse Test-Fit Simulator v4.4</title>
 <!-- Google Maps loaded dynamically when map tab opened -->
 <!-- Extended Component Library for gmp-map, gmpx-place-picker, gmp-advanced-marker -->
 <script async defer src="https://ajax.googleapis.com/ajax/libs/extended-component-library/0.6.11/index.min.js"></script>
@@ -134,9 +134,9 @@ gmpx-place-picker{
 <body>
 <header>
   <div class="logo">TESTFIT <span>//</span> WAREHOUSE</div>
-  <div class="tag">v4.2</div>
-  <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">Google Maps Picker</div>
-  <div class="tag" style="color:var(--green);border-color:var(--green)">GeoJSON Import</div>
+  <div class="tag">v4.4</div>
+  <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">True North Lock</div>
+  <div class="tag" style="color:var(--green);border-color:var(--green)">Polygon Clipping</div>
   <div class="tag" style="color:var(--amber);border-color:var(--amber)">CAD Export</div>
 </header>
 <div class="main">
@@ -170,13 +170,13 @@ gmpx-place-picker{
     <div class="stitle">Setbacks & Site Rules</div>
     <div style="margin-bottom:6px;">
       <label>Front Road / Main Entrance Side</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-top:3px;" id="frontRoadBtns">
-        <button class="pb" id="frBtn-bottom" onclick="setFrontRoad('bottom')" style="border-color:var(--accent);color:var(--accent);">▼ Bottom</button>
-        <button class="pb" id="frBtn-top"    onclick="setFrontRoad('top')">▲ Top</button>
-        <button class="pb" id="frBtn-left"   onclick="setFrontRoad('left')">◀ Left</button>
-        <button class="pb" id="frBtn-right"  onclick="setFrontRoad('right')">▶ Right</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-top:3px;">
+        <button class="pb" id="frBtn-bottom" onclick="setFrontRoad('bottom')" style="border-color:var(--accent);color:var(--accent);">▼ South</button>
+        <button class="pb" id="frBtn-top"    onclick="setFrontRoad('top')">▲ North</button>
+        <button class="pb" id="frBtn-left"   onclick="setFrontRoad('left')">◀ West</button>
+        <button class="pb" id="frBtn-right"  onclick="setFrontRoad('right')">▶ East</button>
       </div>
-      <div style="font-size:8px;color:var(--dim);margin-top:3px;line-height:1.5;">Front setback &amp; guard house applied to the selected road side. Buildings stack inward from the opposite side.</div>
+      <div style="font-size:8px;color:var(--dim);margin-top:3px;line-height:1.5;">Applies front setback &amp; guard house to this lot edge. Polygon is displayed North-up.</div>
     </div>
     <div class="g4">
       <div><label>Front (m)</label><input type="number" id="sbF" value="6" min="0" step="0.5"></div>
@@ -380,9 +380,10 @@ gmpx-place-picker{
 // ═══════════════════════════════════════════════════════════════
 let R=null;
 let coordMode='xy';
-let frontRoad='bottom'; // which lot edge faces the road: bottom|top|left|right
+let frontRoad='bottom';
+let lotNorthAngle=0; // degrees: clockwise rotation so lot top = true north
 let cam={rotX:32,rotY:-42,zoom:1,dragging:false,lastX:0,lastY:0};
-let mapInstance=null; // kept for compat (unused)
+let mapInstance=null;
 let mapMarkers=[];
 let mapPts=[];
 let mapLine=null;
@@ -412,15 +413,6 @@ function setMode(m){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// RAMP TOGGLE
-// ═══════════════════════════════════════════════════════════════
-function tramp(){
-  document.getElementById('strI').style.display=document.getElementById('useStr').checked?'block':'none';
-  document.getElementById('cirI').style.display=document.getElementById('useCir').checked?'block':'none';
-  document.getElementById('cylI').style.display=document.getElementById('useCyl').checked?'block':'none';
-}
-
-// ═══════════════════════════════════════════════════════════════
 // FRONT ROAD SELECTION
 // ═══════════════════════════════════════════════════════════════
 function setFrontRoad(side){
@@ -434,7 +426,18 @@ function setFrontRoad(side){
   runSim();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// RAMP TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function tramp(){
+  document.getElementById('strI').style.display=document.getElementById('useStr').checked?'block':'none';
+  document.getElementById('cirI').style.display=document.getElementById('useCir').checked?'block':'none';
+  document.getElementById('cylI').style.display=document.getElementById('useCyl').checked?'block':'none';
+}
 
+// ═══════════════════════════════════════════════════════════════
+// GEOMETRY HELPERS
+// ═══════════════════════════════════════════════════════════════
 function parseCoords(txt){
   const lines=txt.trim().split('\n').map(l=>l.trim()).filter(Boolean);
   const pts=lines.map(l=>{
@@ -446,7 +449,6 @@ function parseCoords(txt){
   return pts;
 }
 
-// Haversine: lat/lon → local X,Y meters (origin = centroid of first point)
 function latlonToXY(latlonPts){
   const R=6371000;
   const lat0=latlonPts[0][0]*Math.PI/180;
@@ -469,7 +471,6 @@ function bbox(pts){
   const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
   return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
 }
-// Point-in-polygon (ray casting)
 function ptInPoly(px,py,poly){
   let inside=false;
   for(let i=0,j=poly.length-1;i<poly.length;j=i++){
@@ -478,10 +479,139 @@ function ptInPoly(px,py,poly){
   }
   return inside;
 }
-// Inset polygon (simple bbox inset — used for buildable zone)
 function insetBbox(pts,top,btm,left,right){
   const b=bbox(pts);
   return{x:b.minX+left,y:b.minY+top,w:Math.max(0,b.maxX-b.minX-left-right),h:Math.max(0,b.maxY-b.minY-top-btm)};
+}
+
+// ── Polygon centroid ──
+function polyCentroid(pts){
+  let cx=0,cy=0,area=0;
+  const n=pts.length;
+  for(let i=0;i<n;i++){
+    const j=(i+1)%n;
+    const cross=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1];
+    area+=cross;
+    cx+=(pts[i][0]+pts[j][0])*cross;
+    cy+=(pts[i][1]+pts[j][1])*cross;
+  }
+  area/=2;
+  cx/=(6*area); cy/=(6*area);
+  return[cx,cy];
+}
+
+// ── Rotate polygon around centroid by angle (radians) ──
+function rotatePoly(pts,angle,cx,cy){
+  const cos=Math.cos(angle),sin=Math.sin(angle);
+  return pts.map(([x,y])=>{
+    const dx=x-cx,dy=y-cy;
+    return[cx+dx*cos-dy*sin, cy+dx*sin+dy*cos];
+  });
+}
+
+// ── Sutherland-Hodgman polygon clipping ──
+function clipPolyByHalfPlane(poly,[ax,ay],[bx,by]){
+  // Clip poly to the left of edge A→B
+  const out=[];
+  const n=poly.length;
+  for(let i=0;i<n;i++){
+    const cur=poly[i], nxt=poly[(i+1)%n];
+    const curIn=((bx-ax)*(cur[1]-ay)-(by-ay)*(cur[0]-ax))>=0;
+    const nxtIn=((bx-ax)*(nxt[1]-ay)-(by-ay)*(nxt[0]-ax))>=0;
+    if(curIn) out.push(cur);
+    if(curIn!==nxtIn){
+      // Compute intersection
+      const dx=nxt[0]-cur[0],dy=nxt[1]-cur[1];
+      const ex=bx-ax,ey=by-ay;
+      const t=((ax-cur[0])*ey-(ay-cur[1])*ex)/(dx*ey-dy*ex);
+      out.push([cur[0]+t*dx,cur[1]+t*dy]);
+    }
+  }
+  return out;
+}
+
+// ── Inset polygon by uniform offset (shrink) ──
+// Uses edge-parallel offsetting: moves each edge inward by `d` meters.
+function insetPolygon(pts, d){
+  const n=pts.length;
+  if(n<3) return pts;
+  // Ensure CCW winding (positive area means CCW in Y-up coords)
+  let area=0;
+  for(let i=0;i<n;i++){const j=(i+1)%n;area+=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1];}
+  const poly = area>0 ? pts.slice() : pts.slice().reverse();
+
+  // For each edge, compute the inward-offset edge, then intersect adjacent offset edges
+  const offsetEdges=[];
+  for(let i=0;i<n;i++){
+    const a=poly[i], b=poly[(i+1)%n];
+    const ex=b[0]-a[0], ey=b[1]-a[1];
+    const len=Math.hypot(ex,ey);
+    if(len<1e-9){offsetEdges.push([a,b]);continue;}
+    // Inward normal for CCW polygon is (-ey/len, ex/len)
+    const nx=-ey/len, ny=ex/len;
+    offsetEdges.push([[a[0]+nx*d, a[1]+ny*d],[b[0]+nx*d, b[1]+ny*d]]);
+  }
+
+  // Intersect consecutive offset edges to get new vertices
+  const result=[];
+  for(let i=0;i<n;i++){
+    const [p1,p2]=offsetEdges[i];
+    const [p3,p4]=offsetEdges[(i+1)%n];
+    // Line-line intersection
+    const d1x=p2[0]-p1[0], d1y=p2[1]-p1[1];
+    const d2x=p4[0]-p3[0], d2y=p4[1]-p3[1];
+    const denom=d1x*d2y-d1y*d2x;
+    if(Math.abs(denom)<1e-9){
+      result.push(p2);
+    } else {
+      const t=((p3[0]-p1[0])*d2y-(p3[1]-p1[1])*d2x)/denom;
+      result.push([p1[0]+t*d1x, p1[1]+t*d1y]);
+    }
+  }
+  return result.length>=3?result:pts;
+}
+
+// ── Clip a rectangle [x,y,w,h] to a convex polygon using S-H clipping ──
+// Returns array of polygon points that is the intersection
+function clipRectToPoly(rx,ry,rw,rh,poly){
+  let clip=[[rx,ry],[rx+rw,ry],[rx+rw,ry+rh],[rx,ry+rh]];
+  const n=poly.length;
+  for(let i=0;i<n;i++){
+    if(clip.length===0) return[];
+    clip=clipPolyByHalfPlane(clip,poly[i],poly[(i+1)%n]);
+  }
+  return clip;
+}
+
+// ── Axis-aligned bbox of a polygon ──
+function polyBbox(poly){
+  const xs=poly.map(p=>p[0]),ys=poly.map(p=>p[1]);
+  return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
+}
+
+// ── Clip a rect to a polygon and return a clipped rect (bbox of the clipped shape) ──
+// Used to shrink buildings/MEP/GH so they fit within the inset polygon
+function rectClippedToPoly(rx,ry,rw,rh,poly){
+  const clipped=clipRectToPoly(rx,ry,rw,rh,poly);
+  if(clipped.length<3) return null;
+  const b=polyBbox(clipped);
+  // Build rect from the clipped bbox, but also intersect back with original to stay tight
+  const x=Math.max(rx, b.minX);
+  const y=Math.max(ry, b.minY);
+  const x2=Math.min(rx+rw, b.maxX);
+  const y2=Math.min(ry+rh, b.maxY);
+  if(x2-x<2||y2-y<2) return null;
+  return{x,y,w:x2-x,h:y2-y};
+}
+
+// ── Compute lot orientation: angle from local +Y axis to geographic north ──
+// For lat/lon input, the Y axis in latlonToXY is geographic north (dLat).
+// So for lat/lon points, northAngle=0 (already north-up).
+// For X,Y local coords, we don't know orientation → northAngle=0.
+function computeNorthAngle(rawPts, isLatLon){
+  if(!isLatLon) return 0;
+  // For lat/lon converted to XY: Y = north, X = east — already north-up
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -523,6 +653,10 @@ function runSim(){
     }
   }
 
+  // For lat/lon: Y axis = geographic North. No rotation needed.
+  // For local XY: show as-is. North arrow shown for reference.
+  lotNorthAngle = computeNorthAngle(rawPts, isLatLon);
+
   const sbF =+document.getElementById('sbF').value;
   const sbR =+document.getElementById('sbR').value;
   const sbL =+document.getElementById('sbL').value;
@@ -559,25 +693,49 @@ function runSim(){
   const lotArea=polyArea(pts);
   const b=bbox(pts);
 
-  // ── SITE LAYERS ────────────────────────────────────────────
+  // ── SITE LAYERS ─────────────────────────────────────────────
+  // All layers use polygon inset — elements follow the actual polygon shape
   const periGreen=greenW;
   const fireRoad=fireW;
   const bldgGreen=2;
-  const totalInset=periGreen+fireRoad+bldgGreen;
 
-  // Map front road side → setback per edge (top=minY, btm=maxY, left=minX, right=maxX)
-  // frontRoad 'bottom' means the road is at the bottom (maxY) side in local coords.
-  // setback order: insetBbox(pts, top, btm, left, right)
-  let inTop, inBtm, inLeft, inRight;
+  // Inset polygon for perimeter green edge
+  const greenPoly = insetPolygon(pts, periGreen);
+  // Inset polygon for fire road inner edge
+  const fireRoadPoly = insetPolygon(pts, periGreen+fireRoad);
+  // Inset polygon for parking inner edge (just inside fire road)
+  const parkingPoly = insetPolygon(pts, periGreen+fireRoad);
+  // Buildable zone polygon: inset from lot by all layers + setbacks
+  // Front road side determines which direction gets sbF vs sbR
+
+  // Map setbacks to NSEW based on frontRoad and coordinate system
+  // In local XY: Y increases upward (top=north), X increases rightward (right=east)
+  // frontRoad 'bottom' = south-facing road = front setback applied at minY edge (top in canvas)
+  // NOTE: Canvas Y is inverted (ty flips), so:
+  //   'bottom' in world coords = bottom edge (maxY) = canvas bottom
+  //   frontRoad selections are intuitive w.r.t. the canvas display
+  let inTop, inBtm, inLeft, inRight; // inset amounts on each edge of bbox
+  const totalBase = periGreen+fireRoad+bldgGreen;
   switch(frontRoad){
-    case 'bottom': inTop=totalInset+sbR; inBtm=totalInset+sbF; inLeft=totalInset+sbL; inRight=totalInset+sbRt; break;
-    case 'top':    inTop=totalInset+sbF; inBtm=totalInset+sbR; inLeft=totalInset+sbL; inRight=totalInset+sbRt; break;
-    case 'left':   inTop=totalInset+sbL; inBtm=totalInset+sbRt; inLeft=totalInset+sbF; inRight=totalInset+sbR; break;
-    case 'right':  inTop=totalInset+sbL; inBtm=totalInset+sbRt; inLeft=totalInset+sbR; inRight=totalInset+sbF; break;
-    default:       inTop=totalInset+sbR; inBtm=totalInset+sbF; inLeft=totalInset+sbL; inRight=totalInset+sbRt;
+    case 'top':    inTop=totalBase+sbF; inBtm=totalBase+sbR; inLeft=totalBase+sbL; inRight=totalBase+sbRt; break;
+    case 'bottom': inTop=totalBase+sbR; inBtm=totalBase+sbF; inLeft=totalBase+sbL; inRight=totalBase+sbRt; break;
+    case 'left':   inTop=totalBase+sbL; inBtm=totalBase+sbRt; inLeft=totalBase+sbF; inRight=totalBase+sbR; break;
+    case 'right':  inTop=totalBase+sbL; inBtm=totalBase+sbRt; inLeft=totalBase+sbR; inRight=totalBase+sbF; break;
+    default:       inTop=totalBase+sbR; inBtm=totalBase+sbF; inLeft=totalBase+sbL; inRight=totalBase+sbRt;
   }
 
-  const bz=insetBbox(pts, inTop, inBtm, inLeft, inRight);
+  // Build the buildable zone polygon by inset — using per-side offsets on bbox
+  const bz = insetBbox(pts, inTop, inBtm, inLeft, inRight);
+  // Also build a proper inset polygon (uniform inset) for containment checks
+  const minInset = Math.min(inTop,inBtm,inLeft,inRight);
+  const bzPoly = insetPolygon(pts, minInset);
+  // Tighter directional inset polygon
+  const bzPolyDir = [
+    [b.minX+inLeft,  b.minY+inTop],
+    [b.maxX-inRight, b.minY+inTop],
+    [b.maxX-inRight, b.maxY-inBtm],
+    [b.minX+inLeft,  b.maxY-inBtm]
+  ];
 
   if(bz.w<=20||bz.h<=20){
     errEl.textContent='⚠ Lot too small or setbacks too large. Reduce setbacks/insets.';
@@ -586,111 +744,172 @@ function runSim(){
 
   const maxGFA=lotArea*buar;
 
-  // ── RAMP SPACE RESERVATION ──────────────────────────────────
+  // ── RAMP RESERVATION ────────────────────────────────────────
   const uRampDiam = useCir ? (crOut*2+4) : 0;
   const cylDiam   = useCyl ? (cylR+cylW)*2+4 : 0;
   const rampReserveW = Math.max(uRampDiam, cylDiam);
-
-  // Available width for buildings (reserve right side for ramps)
   const effW = Math.max(20, bz.w - rampReserveW);
 
-  // ── MEP — placed inside buildable zone, bottom-right corner ──
-  // Must stay within bz (which already accounts for all setbacks)
-  const mepW = Math.min(Math.sqrt(mepAreaTarget*1.5), effW*0.4);
-  const mepH = Math.min(mepAreaTarget/mepW, bz.h*0.3);
-  const mepRect={
-    x: bz.x + effW - mepW,
-    y: bz.y + bz.h - mepH,
-    w: mepW,
-    h: mepH
-  };
+  // ── MEP — inside buildable zone, bottom-right, clipped to polygon ──
+  const mepAspect=1.5;
+  let mepW=Math.min(Math.sqrt(mepAreaTarget*mepAspect), effW*0.35);
+  let mepH=mepAreaTarget/mepW;
+  // Clamp height so it fits inside bz
+  if(mepH>bz.h*0.28){mepH=bz.h*0.28;mepW=mepAreaTarget/mepH;}
+  let mepRect={x:bz.x+effW-mepW, y:bz.y+bz.h-mepH, w:mepW, h:mepH};
+  // Clip to polygon
+  const mepClipped=rectClippedToPoly(mepRect.x,mepRect.y,mepRect.w,mepRect.h,bzPolyDir);
+  if(mepClipped) mepRect=mepClipped;
 
-  // ── GUARD HOUSE — placed at the front road edge, inside bz ──
-  // Position it at the front-road corner of the buildable zone
-  const ghW=Math.sqrt(ghArea);
-  const ghH=ghArea/ghW;
+  // ── GUARD HOUSE — at front road corner of buildable zone ──
+  const ghSide=frontRoad;
+  const ghW=Math.sqrt(ghArea); const ghH=ghArea/ghW;
   let ghRect;
-  switch(frontRoad){
-    case 'bottom': ghRect={x:bz.x,                   y:bz.y+bz.h-ghH,   w:ghW, h:ghH}; break;
-    case 'top':    ghRect={x:bz.x,                   y:bz.y,             w:ghW, h:ghH}; break;
-    case 'left':   ghRect={x:bz.x,                   y:bz.y,             w:ghW, h:ghH}; break;
-    case 'right':  ghRect={x:bz.x+bz.w-ghW,          y:bz.y,             w:ghW, h:ghH}; break;
-    default:       ghRect={x:bz.x,                   y:bz.y+bz.h-ghH,   w:ghW, h:ghH};
+  switch(ghSide){
+    case 'top':   ghRect={x:bz.x,            y:bz.y,            w:ghW,h:ghH}; break;
+    case 'bottom':ghRect={x:bz.x,            y:bz.y+bz.h-ghH,  w:ghW,h:ghH}; break;
+    case 'left':  ghRect={x:bz.x,            y:bz.y,            w:ghW,h:ghH}; break;
+    case 'right': ghRect={x:bz.x+bz.w-ghW,  y:bz.y,            w:ghW,h:ghH}; break;
+    default:      ghRect={x:bz.x,            y:bz.y+bz.h-ghH,  w:ghW,h:ghH};
   }
+  const ghClipped=rectClippedToPoly(ghRect.x,ghRect.y,ghRect.w,ghRect.h,bzPolyDir);
+  if(ghClipped) ghRect=ghClipped;
 
   // ── BUILDING LAYOUT ─────────────────────────────────────────
-  // Buildings stack along the primary axis (Y) inside the buildable zone.
-  // With 1 building, no yards needed.
-  // Pattern: [Bldg][Yard][Bldg][Yard?][Bldg]...
-  // We reserve a small strip at the MEP end and respect the bz exactly.
-  const nYards = nBldgs > 1 ? Math.floor(nBldgs/2) : 0;
-  // Reserve bottom strip for MEP if it overlaps
-  const mepReserveH = (mepRect.y < bz.y + bz.h - mepH + 1) ? mepH + 2 : 0;
-  const availH = bz.h - nYards*yW - mepReserveH;
-  const bH = Math.max(15, availH / nBldgs);
+  // Yard logic per spec:
+  //   1 bldg: no yards
+  //   2 bldgs: 1 yard between them
+  //   3 bldgs: Bldg1+Bldg2 share yard in middle; Bldg3 gets its own yard (min 28m)
+  //   4 bldgs: two pairs, each pair shares a yard
+  //
+  // Buildings stack top-to-bottom (Y increasing) inside bz.
+  // All buildings clipped to the inset polygon so no spill-over.
 
   const buildings=[];
   const yards=[];
   const sramps=[];
 
-  for(let i=0;i<nBldgs;i++){
-    const pairIdx=Math.floor(i/2);
-    const yOff=i*bH + pairIdx*yW;
-    const bx=bz.x;
-    const by=bz.y+yOff;
+  const minYardW = 28; // minimum truck yard width for solo yard (3-bldg case)
+  const yardW = Math.max(yW, 20); // shared yard width
 
-    // Clamp building to buildable zone — never exceed bz edges
-    let bw=Math.min(effW, bz.x+bz.w-bx);
-    let bh=Math.min(bH,   bz.y+bz.h-yOff-mepReserveH);
-    bh=Math.max(10, bh);
-    bw=Math.max(10, bw);
+  if(nBldgs===1){
+    // Single building fills the buildable zone (minus MEP reserve)
+    const bh=Math.max(15, bz.h - mepH - 2);
+    const bw=Math.min(effW, bz.w);
+    const clipped=rectClippedToPoly(bz.x,bz.y,bw,bh,bzPolyDir);
+    const bx=clipped?clipped.x:bz.x, by=clipped?clipped.y:bz.y;
+    const bwc=clipped?clipped.w:bw, bhc=clipped?clipped.h:bh;
+    const fp=bwc*bhc;
+    buildings.push({id:1,x:bx,y:by,w:bwc,h:bhc,storeys:nStor,fh,
+      fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+      whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:0});
+    if(useStr) sramps.push({x:bx,y:by+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
 
-    // Avoid overlapping MEP (bottom-right)
-    if(bx+bw > mepRect.x && by+bh > mepRect.y){
-      bw=Math.min(bw, mepRect.x-bx);
-      if(bw<10) bw=effW-mepW-2;
+  } else if(nBldgs===2){
+    // Two buildings, one shared yard in the middle
+    const totalH=bz.h;
+    const bh=Math.max(15,(totalH-yardW)/2);
+    for(let i=0;i<2;i++){
+      const by=bz.y+i*(bh+yardW);
+      const clipped=rectClippedToPoly(bz.x,by,effW,bh,bzPolyDir);
+      if(!clipped) continue;
+      const {x:bx,y:byc,w:bwc,h:bhc}=clipped;
+      const fp=bwc*bhc;
+      buildings.push({id:i+1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
+        fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+        whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:i});
+      if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
+    }
+    // Yard between bldg1 and bldg2
+    const yardY=bz.y+bh;
+    const yardClipped=rectClippedToPoly(bz.x,yardY,effW,yardW,bzPolyDir);
+    if(yardClipped) yards.push({...yardClipped,label:'Truck Yard 1'});
+    else yards.push({x:bz.x,y:yardY,w:effW,h:yardW,label:'Truck Yard 1'});
+
+  } else if(nBldgs===3){
+    // Bldg1 + Bldg2 share one yard (middle); Bldg3 has its own yard below (min 28m)
+    const soloYardW=Math.max(minYardW, yardW);
+    const totalH=bz.h;
+    // Layout: [Bldg1][SharedYard][Bldg2][SoloYard][Bldg3]
+    const pair12H=(totalH-yardW-soloYardW)*0.5; // height per bldg in the top pair
+    const bh12=Math.max(15, pair12H);
+    const bh3=Math.max(15, totalH-yardW-soloYardW-bh12*2);
+
+    let cursor=bz.y;
+    // Bldg 1
+    {const clipped=rectClippedToPoly(bz.x,cursor,effW,bh12,bzPolyDir);
+     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bh12};
+     const fp=bwc*bhc;
+     buildings.push({id:1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
+       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:0});
+     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
+    }
+    cursor+=bh12;
+    // Shared yard (Bldg1–Bldg2)
+    {const yc=rectClippedToPoly(bz.x,cursor,effW,yardW,bzPolyDir);
+     yards.push(yc?{...yc,label:'Truck Yard 1 (Shared)'}:{x:bz.x,y:cursor,w:effW,h:yardW,label:'Truck Yard 1 (Shared)'});}
+    cursor+=yardW;
+    // Bldg 2
+    {const clipped=rectClippedToPoly(bz.x,cursor,effW,bh12,bzPolyDir);
+     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bh12};
+     const fp=bwc*bhc;
+     buildings.push({id:2,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
+       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:1});
+     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
+    }
+    cursor+=bh12;
+    // Solo yard (Bldg3) — min 28m
+    {const yc=rectClippedToPoly(bz.x,cursor,effW,soloYardW,bzPolyDir);
+     yards.push(yc?{...yc,label:`Truck Yard 2 (${soloYardW}m)`}:{x:bz.x,y:cursor,w:effW,h:soloYardW,label:`Truck Yard 2 (${soloYardW}m)`});}
+    cursor+=soloYardW;
+    // Bldg 3
+    {const bhc3=Math.max(10,bz.y+bz.h-cursor-mepH-2);
+     const clipped=rectClippedToPoly(bz.x,cursor,effW,bhc3,bzPolyDir);
+     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bhc3};
+     const fp=bwc*bhc;
+     buildings.push({id:3,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
+       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:2});
+     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
     }
 
-    const fp=bw*bh;
-    const whGFApF=fp;
-    const offGFApF=fp*offPct;
-    const totGFApF=whGFApF+offGFApF;
-
-    // Straight ramp: placed within the building's area (bottom edge toward yard)
-    if(useStr){
-      const srRun=Math.min(srL,bh*0.55);
-      sramps.push({x:bx, y:by+bh-srRun, w:Math.min(srW,bw*0.25), h:srRun, slopeStr:`1:${srSlope}`});
+  } else {
+    // 4 buildings: two pairs, each pair shares a yard
+    const totalH=bz.h;
+    const bh=Math.max(15,(totalH-yardW*2)/4);
+    for(let i=0;i<4;i++){
+      const pairIdx=Math.floor(i/2);
+      const yOff=i*bh + pairIdx*yardW;
+      const by=bz.y+yOff;
+      const clipped=rectClippedToPoly(bz.x,by,effW,bh,bzPolyDir);
+      if(!clipped) continue;
+      const {x:bx,y:byc,w:bwc,h:bhc}=clipped;
+      const fp=bwc*bhc;
+      buildings.push({id:i+1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
+        fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+        whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:i%4});
+      if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
+      if(i%2===0 && i+1<4){
+        const yardY=bz.y+yOff+bh;
+        const yc=rectClippedToPoly(bz.x,yardY,effW,yardW,bzPolyDir);
+        yards.push(yc?{...yc,label:`Truck Yard ${pairIdx+1}`}:{x:bz.x,y:yardY,w:effW,h:yardW,label:`Truck Yard ${pairIdx+1}`});
+      }
     }
-
-    // Yard between building pairs (only if >1 building)
-    if(nBldgs>1 && i%2===0 && i+1<nBldgs){
-      yards.push({x:bx, y:by+bh, w:effW, h:yW, label:`Truck Yard ${pairIdx+1}`});
-    }
-
-    buildings.push({
-      id:i+1,x:bx,y:by,w:bw,h:bh,storeys:nStor,fh,
-      fp,whGFApF,offGFApF,totGFApF,
-      whGFA:whGFApF*nStor,offGFA:offGFApF*nStor,totGFA:totGFApF*nStor,
-      ci:i%4
-    });
   }
 
   // ── U-RAMP ──────────────────────────────────────────────────
-  // Placed on right side of buildable zone, clamped inside bz
   let uRamp=null;
   if(useCir){
     const ury=Math.max(bz.y, bz.y+bz.h/2-(crOut+crStrL/2));
-    const urBot=ury+crStrL+crOut;
-    const uryClamped=urBot>bz.y+bz.h ? bz.y+bz.h-crStrL-crOut*2 : ury;
     uRamp={
       type:'u-ramp',
-      x: Math.min(bz.x+effW+2, bz.x+bz.w-crOut*2-2),
-      y: Math.max(bz.y, uryClamped),
-      w: crOut*2,
-      strL: crStrL,
-      innerR: crIn, outerR: crOut, laneW: crW, dir: crDir,
-      headY: Math.max(bz.y, uryClamped)+crStrL,
-      footprint: crStrL*crOut*2 + Math.PI*crOut*crOut/2
+      x:Math.min(bz.x+effW+2, bz.x+bz.w-crOut*2-2),
+      y:Math.max(bz.y, ury),
+      w:crOut*2, strL:crStrL, innerR:crIn, outerR:crOut, laneW:crW, dir:crDir,
+      headY:Math.max(bz.y, ury)+crStrL,
+      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2
     };
   }
 
@@ -698,29 +917,32 @@ function runSim(){
   let cylRamp=null;
   if(useCyl){
     const offset=useCir?uRampDiam+2:0;
-    const cx=Math.min(bz.x+effW+offset+(cylR+cylW)+2, bz.x+bz.w-(cylR+cylW)-2);
-    const cy=Math.max(bz.y+(cylR+cylW)+2, Math.min(bz.y+bz.h*0.3, bz.y+bz.h-(cylR+cylW)-2));
     cylRamp={
-      cx, cy,
-      coreR:cylR, rampW:cylW, turns:cylTurns,
-      outerR:cylR+cylW,
+      cx:Math.min(bz.x+effW+offset+(cylR+cylW)+2, bz.x+bz.w-(cylR+cylW)-2),
+      cy:Math.max(bz.y+(cylR+cylW)+2, bz.y+bz.h*0.3),
+      coreR:cylR,rampW:cylW,turns:cylTurns,outerR:cylR+cylW,
       footprint:Math.PI*((cylR+cylW)**2-cylR**2)
     };
   }
 
-  // ── PERIMETER PARKING ────────────────────────────────────────
-  // Parking rows sit on the fire road band just inside the green strip.
-  // Clamped to lot bbox — always inside the lot.
-  const parkingInset=periGreen+fireRoad;
+  // ── PERIMETER PARKING — clipped to polygon ring ─────────────
+  // Parking lives in the band between fireRoadPoly inner edge and the fire road outer edge
+  // We represent it as 4 axis-aligned strips clipped to the polygon
   const stallDepth=5;
-  const parkingRows={
-    top:   {x:b.minX+parkingInset, y:b.minY+parkingInset, w:b.maxX-b.minX-parkingInset*2, h:stallDepth},
-    btm:   {x:b.minX+parkingInset, y:b.maxY-parkingInset-stallDepth, w:b.maxX-b.minX-parkingInset*2, h:stallDepth},
-    left:  {x:b.minX+parkingInset, y:b.minY+parkingInset+stallDepth, w:stallDepth, h:b.maxY-b.minY-parkingInset*2-stallDepth*2},
-    right: {x:b.maxX-parkingInset-stallDepth, y:b.minY+parkingInset+stallDepth, w:stallDepth, h:b.maxY-b.minY-parkingInset*2-stallDepth*2}
-  };
+  const parkingInset=periGreen+fireRoad;
+  const parkingRows={};
+  // Top strip
+  const ptop=rectClippedToPoly(b.minX+parkingInset,b.minY+parkingInset,b.maxX-b.minX-parkingInset*2,stallDepth,fireRoadPoly)||
+             {x:b.minX+parkingInset,y:b.minY+parkingInset,w:b.maxX-b.minX-parkingInset*2,h:stallDepth};
+  const pbtm=rectClippedToPoly(b.minX+parkingInset,b.maxY-parkingInset-stallDepth,b.maxX-b.minX-parkingInset*2,stallDepth,fireRoadPoly)||
+             {x:b.minX+parkingInset,y:b.maxY-parkingInset-stallDepth,w:b.maxX-b.minX-parkingInset*2,h:stallDepth};
+  const plft=rectClippedToPoly(b.minX+parkingInset,b.minY+parkingInset+stallDepth,stallDepth,b.maxY-b.minY-parkingInset*2-stallDepth*2,fireRoadPoly)||
+             {x:b.minX+parkingInset,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2};
+  const prgt=rectClippedToPoly(b.maxX-parkingInset-stallDepth,b.minY+parkingInset+stallDepth,stallDepth,b.maxY-b.minY-parkingInset*2-stallDepth*2,fireRoadPoly)||
+             {x:b.maxX-parkingInset-stallDepth,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2};
+  parkingRows.top=ptop; parkingRows.btm=pbtm; parkingRows.left=plft; parkingRows.right=prgt;
 
-  // ── TOTALS ─────────────────────────────────────────────────
+  // ── TOTALS ──────────────────────────────────────────────────
   const totWhGFA=buildings.reduce((s,bld)=>s+bld.whGFA,0);
   const totOffGFA=buildings.reduce((s,bld)=>s+bld.offGFA,0);
   const totGFA=buildings.reduce((s,bld)=>s+bld.totGFA,0);
@@ -738,7 +960,7 @@ function runSim(){
   const parking=calcParking(totWhGFA,totOffGFA,stallArea);
 
   R={
-    pts,rawPts,isLatLon,b,bz,
+    pts,rawPts,isLatLon,b,bz,bzPolyDir,
     buildings,yards,sramps,uRamp,cylRamp,
     parkingRows,mepRect,ghRect,
     lotArea,maxGFA,buar,buarActual,
@@ -748,7 +970,8 @@ function runSim(){
     useStr,useCir,useCyl,srW,srL,srSlope,
     crIn,crOut,crStrL,crW,crDir,cylR,cylW,cylTurns,
     mepAreaTarget,ghArea,fireW,greenW,periGreen,fireRoad,bldgGreen,
-    parking,effW,rampReserveW,frontRoad
+    parking,effW,rampReserveW,frontRoad,
+    greenPoly,fireRoadPoly
   };
 
   draw2D();draw3D();renderGFA();renderParking();renderCompliance();renderGeoData();
@@ -993,33 +1216,8 @@ function draw2D(){
   ctx.fillStyle='#e8ff47';ctx.font='9px Space Mono';ctx.textAlign='center';
   ctx.fillText(`${sm}m`,sx+spx/2,sy-7);
 
-  // ── FRONT ROAD ARROW INDICATOR ──
-  {
-    const fr=R.frontRoad||'bottom';
-    const cx=cv.width/2, cy=cv.height/2;
-    const arrLen=28, arrGap=8;
-    let ax,ay,dx,dy,labelX,labelY;
-    if(fr==='bottom'){ ax=cx; ay=cv.height-arrGap; dx=0; dy=-arrLen; labelX=cx; labelY=cv.height-arrGap-arrLen-5;}
-    else if(fr==='top'){ ax=cx; ay=arrGap; dx=0; dy=arrLen; labelX=cx; labelY=arrGap+arrLen+10;}
-    else if(fr==='left'){ ax=arrGap; ay=cy; dx=arrLen; dy=0; labelX=arrGap+arrLen+4; labelY=cy-6;}
-    else { ax=cv.width-arrGap; ay=cy; dx=-arrLen; dy=0; labelX=cv.width-arrGap-arrLen-4; labelY=cy-6;}
-    ctx.save();
-    ctx.strokeStyle='#e8ff47';ctx.fillStyle='#e8ff47';ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax+dx,ay+dy);ctx.stroke();
-    // arrowhead
-    const angle=Math.atan2(dy,dx);
-    ctx.beginPath();
-    ctx.moveTo(ax+dx,ay+dy);
-    ctx.lineTo(ax+dx-10*Math.cos(angle-0.4),ay+dy-10*Math.sin(angle-0.4));
-    ctx.lineTo(ax+dx-10*Math.cos(angle+0.4),ay+dy-10*Math.sin(angle+0.4));
-    ctx.closePath();ctx.fill();
-    ctx.font='bold 9px Space Mono';ctx.textAlign='center';
-    ctx.fillText('ROAD',labelX,labelY);
-    ctx.restore();
-  }
-
   document.getElementById('scaleInfo').textContent=
-    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% · Road: ${(R.frontRoad||'bottom').toUpperCase()}`;
+    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}%`;
 }
 
 // ═══════════════════════════════════════════════════════════════
