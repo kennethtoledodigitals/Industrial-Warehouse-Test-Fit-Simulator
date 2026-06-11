@@ -530,7 +530,75 @@ function clipPolyByHalfPlane(poly,[ax,ay],[bx,by]){
   return out;
 }
 
-// ── Inset polygon by uniform offset (shrink) ──
+// ── Inset bbox (kept for compatibility) ──
+function insetBbox(pts,top,btm,left,right){
+  const b=bbox(pts);
+  return{x:b.minX+left,y:b.minY+top,w:Math.max(0,b.maxX-b.minX-left-right),h:Math.max(0,b.maxY-b.minY-top-btm)};
+}
+
+// ── Maximum Inscribed Axis-Aligned Rectangle inside a polygon ──
+// Uses a grid-scan approach: tries many candidate rectangles centred on
+// the polygon centroid and picks the largest fully-contained one.
+function maxInscribedRect(poly, inset){
+  const shrunk = insetPolygon(poly, inset);
+  if(!shrunk || shrunk.length < 3) return null;
+  const b = polyBbox(shrunk);
+  const [cx, cy] = polyCentroid(shrunk);
+
+  // Test if a rectangle [x,y,w,h] is fully inside poly (all 4 corners + edge midpoints)
+  function rectInPoly(x, y, w, h){
+    const tests = [
+      [x,y],[x+w,y],[x,y+h],[x+w,y+h],
+      [x+w/2,y],[x+w/2,y+h],[x,y+h/2],[x+w,y+h/2],
+      [x+w/2,y+h/2]
+    ];
+    return tests.every(([px,py]) => ptInPoly(px, py, shrunk));
+  }
+
+  let best = {x:cx-1, y:cy-1, w:2, h:2};
+  const lotW = b.maxX - b.minX;
+  const lotH = b.maxY - b.minY;
+
+  // Scan grid of candidate top-left corners and sizes
+  const steps = 30;
+  for(let xi = 0; xi <= steps; xi++){
+    const x = b.minX + lotW * xi / steps;
+    for(let yi = 0; yi <= steps; yi++){
+      const y = b.minY + lotH * yi / steps;
+      // Binary search for max width from this corner
+      let lo=0, hi=b.maxX-x;
+      for(let iter=0;iter<16;iter++){
+        const mid=(lo+hi)/2;
+        // For this width, binary search max height
+        let hlo=0, hhi=b.maxY-y;
+        for(let hit=0;hit<16;hit++){
+          const hmid=(hlo+hhi)/2;
+          if(rectInPoly(x,y,mid,hmid)) hlo=hmid; else hhi=hmid;
+        }
+        if(rectInPoly(x,y,mid,hlo)) lo=mid; else hi=mid;
+      }
+      // lo = max width, find matching max height
+      let hlo=0, hhi=b.maxY-y;
+      for(let hit=0;hit<16;hit++){
+        const hmid=(hlo+hhi)/2;
+        if(rectInPoly(x,y,lo,hmid)) hlo=hmid; else hhi=hmid;
+      }
+      if(lo * hlo > best.w * best.h){
+        best = {x, y, w:lo, h:hlo};
+      }
+    }
+  }
+  return best;
+}
+
+// ── Apply canvas clip path from a polygon ──
+function applyPolyClip(ctx, poly, tx, ty){
+  ctx.beginPath();
+  poly.forEach((p,i) => i===0 ? ctx.moveTo(tx(p[0]),ty(p[1])) : ctx.lineTo(tx(p[0]),ty(p[1])));
+  ctx.closePath();
+  ctx.clip();
+}
+
 // Uses edge-parallel offsetting: moves each edge inward by `d` meters.
 function insetPolygon(pts, d){
   const n=pts.length;
@@ -726,227 +794,129 @@ function runSim(){
 
   // Build the buildable zone polygon by inset — using per-side offsets on bbox
   const bz = insetBbox(pts, inTop, inBtm, inLeft, inRight);
-  // Also build a proper inset polygon (uniform inset) for containment checks
-  const minInset = Math.min(inTop,inBtm,inLeft,inRight);
-  const bzPoly = insetPolygon(pts, minInset);
-  // Tighter directional inset polygon
-  const bzPolyDir = [
-    [b.minX+inLeft,  b.minY+inTop],
-    [b.maxX-inRight, b.minY+inTop],
-    [b.maxX-inRight, b.maxY-inBtm],
-    [b.minX+inLeft,  b.maxY-inBtm]
-  ];
 
-  if(bz.w<=20||bz.h<=20){
-    errEl.textContent='⚠ Lot too small or setbacks too large. Reduce setbacks/insets.';
+  // ── TRUE BUILDABLE ZONE: largest rectangle inside the inset polygon ──
+  // This is what we actually place buildings in — it always fits the polygon shape.
+  const totalInsetForMIR = Math.min(inTop, inBtm, inLeft, inRight);
+  const mirRect = maxInscribedRect(pts, totalInsetForMIR) || bz;
+  // Use mirRect as the actual layout zone — guaranteed inside the polygon
+  const lz = mirRect; // layout zone
+
+  // Also keep a directed inset polygon for clipping
+  const bzPolyDir = insetPolygon(pts, totalInsetForMIR);
+
+  if(lz.w<=10||lz.h<=10){
+    errEl.textContent='⚠ Lot too small or setbacks too large — no buildable space inside polygon.';
     errEl.style.display='block';return;
   }
 
   const maxGFA=lotArea*buar;
+  const uRampDiam=useCir?(crOut*2+4):0;
+  const cylDiam=useCyl?(cylR+cylW)*2+4:0;
+  const rampReserveW=Math.max(uRampDiam,cylDiam);
+  const effW=Math.max(20,lz.w-rampReserveW);
 
-  // ── RAMP RESERVATION ────────────────────────────────────────
-  const uRampDiam = useCir ? (crOut*2+4) : 0;
-  const cylDiam   = useCyl ? (cylR+cylW)*2+4 : 0;
-  const rampReserveW = Math.max(uRampDiam, cylDiam);
-  const effW = Math.max(20, bz.w - rampReserveW);
-
-  // ── MEP — inside buildable zone, bottom-right, clipped to polygon ──
-  const mepAspect=1.5;
-  let mepW=Math.min(Math.sqrt(mepAreaTarget*mepAspect), effW*0.35);
+  // MEP — bottom-right of lz
+  let mepW=Math.min(Math.sqrt(mepAreaTarget*1.5),effW*0.35);
   let mepH=mepAreaTarget/mepW;
-  // Clamp height so it fits inside bz
-  if(mepH>bz.h*0.28){mepH=bz.h*0.28;mepW=mepAreaTarget/mepH;}
-  let mepRect={x:bz.x+effW-mepW, y:bz.y+bz.h-mepH, w:mepW, h:mepH};
-  // Clip to polygon
-  const mepClipped=rectClippedToPoly(mepRect.x,mepRect.y,mepRect.w,mepRect.h,bzPolyDir);
-  if(mepClipped) mepRect=mepClipped;
+  if(mepH>lz.h*0.28){mepH=lz.h*0.28;mepW=mepAreaTarget/mepH;}
+  let mepRect={x:Math.max(lz.x,lz.x+effW-mepW),y:Math.max(lz.y,lz.y+lz.h-mepH),w:mepW,h:mepH};
 
-  // ── GUARD HOUSE — at front road corner of buildable zone ──
-  const ghSide=frontRoad;
-  const ghW=Math.sqrt(ghArea); const ghH=ghArea/ghW;
+  // Guard house — front road edge
+  const ghW=Math.sqrt(ghArea),ghH=ghArea/ghW;
   let ghRect;
-  switch(ghSide){
-    case 'top':   ghRect={x:bz.x,            y:bz.y,            w:ghW,h:ghH}; break;
-    case 'bottom':ghRect={x:bz.x,            y:bz.y+bz.h-ghH,  w:ghW,h:ghH}; break;
-    case 'left':  ghRect={x:bz.x,            y:bz.y,            w:ghW,h:ghH}; break;
-    case 'right': ghRect={x:bz.x+bz.w-ghW,  y:bz.y,            w:ghW,h:ghH}; break;
-    default:      ghRect={x:bz.x,            y:bz.y+bz.h-ghH,  w:ghW,h:ghH};
+  switch(frontRoad){
+    case 'top':    ghRect={x:lz.x,          y:lz.y,          w:ghW,h:ghH};break;
+    case 'bottom': ghRect={x:lz.x,          y:lz.y+lz.h-ghH,w:ghW,h:ghH};break;
+    case 'left':   ghRect={x:lz.x,          y:lz.y,          w:ghW,h:ghH};break;
+    case 'right':  ghRect={x:lz.x+lz.w-ghW,y:lz.y,          w:ghW,h:ghH};break;
+    default:       ghRect={x:lz.x,          y:lz.y+lz.h-ghH,w:ghW,h:ghH};
   }
-  const ghClipped=rectClippedToPoly(ghRect.x,ghRect.y,ghRect.w,ghRect.h,bzPolyDir);
-  if(ghClipped) ghRect=ghClipped;
 
-  // ── BUILDING LAYOUT ─────────────────────────────────────────
-  // Yard logic per spec:
-  //   1 bldg: no yards
-  //   2 bldgs: 1 yard between them
-  //   3 bldgs: Bldg1+Bldg2 share yard in middle; Bldg3 gets its own yard (min 28m)
-  //   4 bldgs: two pairs, each pair shares a yard
-  //
-  // Buildings stack top-to-bottom (Y increasing) inside bz.
-  // All buildings clipped to the inset polygon so no spill-over.
+  // Building layout — all inside lz, hard-clamped
+  const buildings=[],yards=[],sramps=[];
+  const minYardW=28,yardW=Math.max(yW,20);
 
-  const buildings=[];
-  const yards=[];
-  const sramps=[];
+  function addBldg(id,bx,by,bw,bh,ci){
+    bx=Math.max(lz.x,bx);
+    by=Math.max(lz.y,by);
+    bw=Math.min(bw,lz.x+effW-bx);
+    bh=Math.min(bh,lz.y+lz.h-by);
+    if(bw<5||bh<5)return;
+    const fp=bw*bh;
+    buildings.push({id,x:bx,y:by,w:bw,h:bh,storeys:nStor,fh,
+      fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
+      whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci});
+    if(useStr){
+      const srh=Math.min(srL,bh*0.4),srw=Math.min(srW,bw*0.3);
+      sramps.push({x:bx,y:by+bh-srh,w:srw,h:srh,slopeStr:'1:'+srSlope});
+    }
+  }
 
-  const minYardW = 28; // minimum truck yard width for solo yard (3-bldg case)
-  const yardW = Math.max(yW, 20); // shared yard width
+  function addYard(bx,by,bw,bh,label){
+    bx=Math.max(lz.x,bx);by=Math.max(lz.y,by);
+    bw=Math.min(bw,lz.x+effW-bx);bh=Math.min(bh,lz.y+lz.h-by);
+    if(bw>2&&bh>2)yards.push({x:bx,y:by,w:bw,h:bh,label});
+  }
 
   if(nBldgs===1){
-    // Single building fills the buildable zone (minus MEP reserve)
-    const bh=Math.max(15, bz.h - mepH - 2);
-    const bw=Math.min(effW, bz.w);
-    const clipped=rectClippedToPoly(bz.x,bz.y,bw,bh,bzPolyDir);
-    const bx=clipped?clipped.x:bz.x, by=clipped?clipped.y:bz.y;
-    const bwc=clipped?clipped.w:bw, bhc=clipped?clipped.h:bh;
-    const fp=bwc*bhc;
-    buildings.push({id:1,x:bx,y:by,w:bwc,h:bhc,storeys:nStor,fh,
-      fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-      whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:0});
-    if(useStr) sramps.push({x:bx,y:by+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-
-  } else if(nBldgs===2){
-    // Two buildings, one shared yard in the middle
-    const totalH=bz.h;
-    const bh=Math.max(15,(totalH-yardW)/2);
-    for(let i=0;i<2;i++){
-      const by=bz.y+i*(bh+yardW);
-      const clipped=rectClippedToPoly(bz.x,by,effW,bh,bzPolyDir);
-      if(!clipped) continue;
-      const {x:bx,y:byc,w:bwc,h:bhc}=clipped;
-      const fp=bwc*bhc;
-      buildings.push({id:i+1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
-        fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-        whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:i});
-      if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-    }
-    // Yard between bldg1 and bldg2
-    const yardY=bz.y+bh;
-    const yardClipped=rectClippedToPoly(bz.x,yardY,effW,yardW,bzPolyDir);
-    if(yardClipped) yards.push({...yardClipped,label:'Truck Yard 1'});
-    else yards.push({x:bz.x,y:yardY,w:effW,h:yardW,label:'Truck Yard 1'});
-
-  } else if(nBldgs===3){
-    // Bldg1 + Bldg2 share one yard (middle); Bldg3 has its own yard below (min 28m)
-    const soloYardW=Math.max(minYardW, yardW);
-    const totalH=bz.h;
-    // Layout: [Bldg1][SharedYard][Bldg2][SoloYard][Bldg3]
-    const pair12H=(totalH-yardW-soloYardW)*0.5; // height per bldg in the top pair
-    const bh12=Math.max(15, pair12H);
-    const bh3=Math.max(15, totalH-yardW-soloYardW-bh12*2);
-
-    let cursor=bz.y;
-    // Bldg 1
-    {const clipped=rectClippedToPoly(bz.x,cursor,effW,bh12,bzPolyDir);
-     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bh12};
-     const fp=bwc*bhc;
-     buildings.push({id:1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
-       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:0});
-     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-    }
-    cursor+=bh12;
-    // Shared yard (Bldg1–Bldg2)
-    {const yc=rectClippedToPoly(bz.x,cursor,effW,yardW,bzPolyDir);
-     yards.push(yc?{...yc,label:'Truck Yard 1 (Shared)'}:{x:bz.x,y:cursor,w:effW,h:yardW,label:'Truck Yard 1 (Shared)'});}
-    cursor+=yardW;
-    // Bldg 2
-    {const clipped=rectClippedToPoly(bz.x,cursor,effW,bh12,bzPolyDir);
-     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bh12};
-     const fp=bwc*bhc;
-     buildings.push({id:2,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
-       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:1});
-     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-    }
-    cursor+=bh12;
-    // Solo yard (Bldg3) — min 28m
-    {const yc=rectClippedToPoly(bz.x,cursor,effW,soloYardW,bzPolyDir);
-     yards.push(yc?{...yc,label:`Truck Yard 2 (${soloYardW}m)`}:{x:bz.x,y:cursor,w:effW,h:soloYardW,label:`Truck Yard 2 (${soloYardW}m)`});}
-    cursor+=soloYardW;
-    // Bldg 3
-    {const bhc3=Math.max(10,bz.y+bz.h-cursor-mepH-2);
-     const clipped=rectClippedToPoly(bz.x,cursor,effW,bhc3,bzPolyDir);
-     const {x:bx,y:byc,w:bwc,h:bhc}=clipped||{x:bz.x,y:cursor,w:effW,h:bhc3};
-     const fp=bwc*bhc;
-     buildings.push({id:3,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
-       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-       whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:2});
-     if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-    }
-
-  } else {
-    // 4 buildings: two pairs, each pair shares a yard
-    const totalH=bz.h;
-    const bh=Math.max(15,(totalH-yardW*2)/4);
-    for(let i=0;i<4;i++){
-      const pairIdx=Math.floor(i/2);
-      const yOff=i*bh + pairIdx*yardW;
-      const by=bz.y+yOff;
-      const clipped=rectClippedToPoly(bz.x,by,effW,bh,bzPolyDir);
-      if(!clipped) continue;
-      const {x:bx,y:byc,w:bwc,h:bhc}=clipped;
-      const fp=bwc*bhc;
-      buildings.push({id:i+1,x:bx,y:byc,w:bwc,h:bhc,storeys:nStor,fh,
-        fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-        whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci:i%4});
-      if(useStr) sramps.push({x:bx,y:byc+bhc-Math.min(srL,bhc*0.55),w:Math.min(srW,bwc*0.3),h:Math.min(srL,bhc*0.55),slopeStr:`1:${srSlope}`});
-      if(i%2===0 && i+1<4){
-        const yardY=bz.y+yOff+bh;
-        const yc=rectClippedToPoly(bz.x,yardY,effW,yardW,bzPolyDir);
-        yards.push(yc?{...yc,label:`Truck Yard ${pairIdx+1}`}:{x:bz.x,y:yardY,w:effW,h:yardW,label:`Truck Yard ${pairIdx+1}`});
-      }
-    }
+    addBldg(1,lz.x,lz.y,effW,lz.h-mepH-2,0);
+  }else if(nBldgs===2){
+    const bh=Math.max(10,(lz.h-yardW)/2);
+    addBldg(1,lz.x,lz.y,effW,bh,0);
+    addYard(lz.x,lz.y+bh,effW,yardW,'Truck Yard 1');
+    addBldg(2,lz.x,lz.y+bh+yardW,effW,Math.max(10,lz.h-bh-yardW),1);
+  }else if(nBldgs===3){
+    const sy=Math.max(minYardW,yardW);
+    const bh=Math.max(10,(lz.h-yardW-sy)/3);
+    let c=lz.y;
+    addBldg(1,lz.x,c,effW,bh,0);c+=bh;
+    addYard(lz.x,c,effW,yardW,'Truck Yard 1 (Shared B1-B2)');c+=yardW;
+    addBldg(2,lz.x,c,effW,bh,1);c+=bh;
+    addYard(lz.x,c,effW,sy,'Truck Yard 2 · B3 ('+sy.toFixed(0)+'m)');c+=sy;
+    addBldg(3,lz.x,c,effW,Math.max(10,lz.y+lz.h-c-mepH-2),2);
+  }else{
+    const bh=Math.max(10,(lz.h-yardW*2)/4);
+    let c=lz.y;
+    addBldg(1,lz.x,c,effW,bh,0);c+=bh;
+    addBldg(2,lz.x,c,effW,bh,1);c+=bh;
+    addYard(lz.x,c,effW,yardW,'Truck Yard 1 (B1-B2)');c+=yardW;
+    addBldg(3,lz.x,c,effW,bh,2);c+=bh;
+    addYard(lz.x,c,effW,yardW,'Truck Yard 2 (B3-B4)');c+=yardW;
+    addBldg(4,lz.x,c,effW,Math.max(10,lz.y+lz.h-c-mepH-2),3);
   }
 
-  // ── U-RAMP ──────────────────────────────────────────────────
+  // U-ramp
   let uRamp=null;
   if(useCir){
-    const ury=Math.max(bz.y, bz.y+bz.h/2-(crOut+crStrL/2));
-    uRamp={
-      type:'u-ramp',
-      x:Math.min(bz.x+effW+2, bz.x+bz.w-crOut*2-2),
-      y:Math.max(bz.y, ury),
-      w:crOut*2, strL:crStrL, innerR:crIn, outerR:crOut, laneW:crW, dir:crDir,
-      headY:Math.max(bz.y, ury)+crStrL,
-      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2
-    };
+    const ury=Math.max(lz.y,lz.y+lz.h/2-(crOut+crStrL/2));
+    uRamp={type:'u-ramp',x:lz.x+effW+2,y:ury,w:crOut*2,strL:crStrL,
+      innerR:crIn,outerR:crOut,laneW:crW,dir:crDir,headY:ury+crStrL,
+      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2};
   }
 
-  // ── CYLINDRICAL HELIX ───────────────────────────────────────
+  // Cylindrical helix
   let cylRamp=null;
   if(useCyl){
     const offset=useCir?uRampDiam+2:0;
-    cylRamp={
-      cx:Math.min(bz.x+effW+offset+(cylR+cylW)+2, bz.x+bz.w-(cylR+cylW)-2),
-      cy:Math.max(bz.y+(cylR+cylW)+2, bz.y+bz.h*0.3),
+    cylRamp={cx:lz.x+effW+offset+(cylR+cylW)+2,cy:lz.y+lz.h*0.3,
       coreR:cylR,rampW:cylW,turns:cylTurns,outerR:cylR+cylW,
-      footprint:Math.PI*((cylR+cylW)**2-cylR**2)
-    };
+      footprint:Math.PI*((cylR+cylW)**2-cylR**2)};
   }
 
-  // ── PERIMETER PARKING — clipped to polygon ring ─────────────
-  // Parking lives in the band between fireRoadPoly inner edge and the fire road outer edge
-  // We represent it as 4 axis-aligned strips clipped to the polygon
-  const stallDepth=5;
-  const parkingInset=periGreen+fireRoad;
-  const parkingRows={};
-  // Top strip
-  const ptop=rectClippedToPoly(b.minX+parkingInset,b.minY+parkingInset,b.maxX-b.minX-parkingInset*2,stallDepth,fireRoadPoly)||
-             {x:b.minX+parkingInset,y:b.minY+parkingInset,w:b.maxX-b.minX-parkingInset*2,h:stallDepth};
-  const pbtm=rectClippedToPoly(b.minX+parkingInset,b.maxY-parkingInset-stallDepth,b.maxX-b.minX-parkingInset*2,stallDepth,fireRoadPoly)||
-             {x:b.minX+parkingInset,y:b.maxY-parkingInset-stallDepth,w:b.maxX-b.minX-parkingInset*2,h:stallDepth};
-  const plft=rectClippedToPoly(b.minX+parkingInset,b.minY+parkingInset+stallDepth,stallDepth,b.maxY-b.minY-parkingInset*2-stallDepth*2,fireRoadPoly)||
-             {x:b.minX+parkingInset,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2};
-  const prgt=rectClippedToPoly(b.maxX-parkingInset-stallDepth,b.minY+parkingInset+stallDepth,stallDepth,b.maxY-b.minY-parkingInset*2-stallDepth*2,fireRoadPoly)||
-             {x:b.maxX-parkingInset-stallDepth,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2};
-  parkingRows.top=ptop; parkingRows.btm=pbtm; parkingRows.left=plft; parkingRows.right=prgt;
+  // Perimeter parking — inside fire road band, clipped to lot polygon via canvas
+  const stallDepth=5,parkingInset=periGreen+fireRoad;
+  const parkingRows={
+    top:  {x:b.minX+parkingInset,y:b.minY+parkingInset,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
+    btm:  {x:b.minX+parkingInset,y:b.maxY-parkingInset-stallDepth,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
+    left: {x:b.minX+parkingInset,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2},
+    right:{x:b.maxX-parkingInset-stallDepth,y:b.minY+parkingInset+stallDepth,w:stallDepth,h:b.maxY-b.minY-parkingInset*2-stallDepth*2}
+  };
 
-  // ── TOTALS ──────────────────────────────────────────────────
-  const totWhGFA=buildings.reduce((s,bld)=>s+bld.whGFA,0);
-  const totOffGFA=buildings.reduce((s,bld)=>s+bld.offGFA,0);
-  const totGFA=buildings.reduce((s,bld)=>s+bld.totGFA,0);
-  const totFP=buildings.reduce((s,bld)=>s+bld.fp,0);
+  const totWhGFA=buildings.reduce((s,d)=>s+d.whGFA,0);
+  const totOffGFA=buildings.reduce((s,d)=>s+d.offGFA,0);
+  const totGFA=buildings.reduce((s,d)=>s+d.totGFA,0);
+  const totFP=buildings.reduce((s,d)=>s+d.fp,0);
   const totYard=yards.reduce((s,y)=>s+y.w*y.h,0);
   const totStrRamp=sramps.reduce((s,r)=>s+r.w*r.h,0);
   const uRampFP=uRamp?uRamp.footprint:0;
@@ -960,7 +930,7 @@ function runSim(){
   const parking=calcParking(totWhGFA,totOffGFA,stallArea);
 
   R={
-    pts,rawPts,isLatLon,b,bz,bzPolyDir,
+    pts,rawPts,isLatLon,b,bz:lz,lz,bzPolyDir,
     buildings,yards,sramps,uRamp,cylRamp,
     parkingRows,mepRect,ghRect,
     lotArea,maxGFA,buar,buarActual,
@@ -971,7 +941,8 @@ function runSim(){
     crIn,crOut,crStrL,crW,crDir,cylR,cylW,cylTurns,
     mepAreaTarget,ghArea,fireW,greenW,periGreen,fireRoad,bldgGreen,
     parking,effW,rampReserveW,frontRoad,
-    greenPoly,fireRoadPoly
+    greenPoly:insetPolygon(pts,periGreen),
+    fireRoadPoly:insetPolygon(pts,periGreen+fireRoad)
   };
 
   draw2D();draw3D();renderGFA();renderParking();renderCompliance();renderGeoData();
@@ -987,10 +958,10 @@ function draw2D(){
   cv.width=cv.parentElement.clientWidth;
   cv.height=cv.parentElement.clientHeight;
   const ctx=cv.getContext('2d');
-  const{pts,b,bz,buildings,yards,sramps,uRamp,cylRamp,parkingRows,mepRect,ghRect,
-        periGreen,fireRoad,greenW,fireW}=R;
+  const{pts,b,lz,buildings,yards,sramps,uRamp,cylRamp,parkingRows,mepRect,ghRect,
+        periGreen,fireRoad,greenW,fireW,greenPoly,fireRoadPoly,bzPolyDir}=R;
 
-  const pad=48;
+  const pad=56;
   const sc=Math.min((cv.width-pad*2)/(b.maxX-b.minX),(cv.height-pad*2)/(b.maxY-b.minY));
   const ox=pad+(cv.width-pad*2-(b.maxX-b.minX)*sc)/2-b.minX*sc;
   const oy=pad+(cv.height-pad*2-(b.maxY-b.minY)*sc)/2-b.minY*sc;
@@ -1000,179 +971,134 @@ function draw2D(){
 
   ctx.clearRect(0,0,cv.width,cv.height);
 
-  // Grid
+  // Grid (always full canvas, behind everything)
   ctx.strokeStyle='#0c1318';ctx.lineWidth=1;
   for(let gx=Math.floor(b.minX/10)*10;gx<=b.maxX+10;gx+=10){ctx.beginPath();ctx.moveTo(tx(gx),0);ctx.lineTo(tx(gx),cv.height);ctx.stroke();}
   for(let gy=Math.floor(b.minY/10)*10;gy<=b.maxY+10;gy+=10){ctx.beginPath();ctx.moveTo(0,ty(gy));ctx.lineTo(cv.width,ty(gy));ctx.stroke();}
 
-  // ── LOT FILL ──
-  ctx.beginPath();
-  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
-  ctx.closePath();ctx.fillStyle='#0b1420';ctx.fill();
+  // ── Helper: build polygon path ──
+  function polyPath(poly){
+    ctx.beginPath();
+    poly.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
+    ctx.closePath();
+  }
 
-  // ── PERIMETER GREEN STRIP ──
+  // ── LOT FILL ──
+  polyPath(pts); ctx.fillStyle='#0b1420'; ctx.fill();
+
+  // ── PERIMETER GREEN STRIP (stroke trick on lot outline) ──
   ctx.save();
-  ctx.beginPath();
-  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
-  ctx.closePath();
-  // Draw as thin border using stroke trick
-  ctx.strokeStyle='rgba(61,255,154,0.25)';
+  polyPath(pts);
+  ctx.strokeStyle='rgba(61,255,154,0.22)';
   ctx.lineWidth=sw(periGreen)*2;
   ctx.stroke();
   ctx.restore();
 
-  // ── FIRE ACCESS ROAD (ring just inside green strip) ──
-  const frInset=periGreen+fireRoad/2;
+  // ── FIRE ACCESS ROAD band ──
   ctx.save();
-  ctx.beginPath();
-  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
-  ctx.closePath();
-  ctx.strokeStyle='rgba(71,200,255,0.18)';
-  ctx.lineWidth=sw(fireRoad);
+  polyPath(pts);
+  ctx.strokeStyle='rgba(71,200,255,0.14)';
+  ctx.lineWidth=sw(fireRoad+periGreen)*2;
   ctx.stroke();
   ctx.restore();
 
-  // ── PARKING ROWS (perimeter) ──
+  // ─────────────────────────────────────────────────────────────
+  // ALL INTERIOR CONTENT clipped to the lot polygon
+  // This is the key fix: nothing can render outside the polygon.
+  // ─────────────────────────────────────────────────────────────
+  ctx.save();
+  polyPath(pts);
+  ctx.clip();
+
+  // ── PARKING ROWS — clipped stalls ──
   const drawParkingRow=(rx,ry,rw,rh,vertical)=>{
+    if(rw<=0||rh<=0)return;
     ctx.fillStyle='rgba(26,26,8,0.8)';ctx.fillRect(tx(rx),ty(ry),sw(rw),sw(rh));
     ctx.strokeStyle='rgba(255,179,71,0.5)';ctx.lineWidth=0.5;
     ctx.strokeRect(tx(rx),ty(ry),sw(rw),sw(rh));
-    // stall lines
     const stallW=2.5;
-    ctx.strokeStyle='rgba(255,179,71,0.25)';ctx.lineWidth=0.5;
-    if(!vertical){
-      for(let sx=0;sx<rw;sx+=stallW){
-        ctx.beginPath();ctx.moveTo(tx(rx+sx),ty(ry));ctx.lineTo(tx(rx+sx),ty(ry+rh));ctx.stroke();
-      }
-    } else {
-      for(let sy=0;sy<rh;sy+=stallW){
-        ctx.beginPath();ctx.moveTo(tx(rx),ty(ry+sy));ctx.lineTo(tx(rx+rw),ty(ry+sy));ctx.stroke();
-      }
-    }
+    ctx.strokeStyle='rgba(255,179,71,0.2)';ctx.lineWidth=0.4;
+    if(!vertical){for(let sx=0;sx<rw;sx+=stallW){ctx.beginPath();ctx.moveTo(tx(rx+sx),ty(ry));ctx.lineTo(tx(rx+sx),ty(ry+rh));ctx.stroke();}}
+    else{for(let sy=0;sy<rh;sy+=stallW){ctx.beginPath();ctx.moveTo(tx(rx),ty(ry+sy));ctx.lineTo(tx(rx+rw),ty(ry+sy));ctx.stroke();}}
   };
-  Object.values(R.parkingRows).forEach((pr,i)=>drawParkingRow(pr.x,pr.y,pr.w,pr.h,i>=2));
+  Object.values(parkingRows).forEach((pr,i)=>drawParkingRow(pr.x,pr.y,pr.w,pr.h,i>=2));
 
-  // ── BUILDABLE ZONE (dashed) ──
-  ctx.beginPath();
-  ctx.rect(tx(bz.x),ty(bz.y),sw(bz.w),sw(bz.h));
-  ctx.strokeStyle='#1e3a1e';ctx.setLineDash([4,4]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
+  // ── BUILDABLE ZONE outline (dashed inset polygon) ──
+  if(bzPolyDir && bzPolyDir.length>=3){
+    polyPath(bzPolyDir);
+    ctx.strokeStyle='#1e3a1e';ctx.setLineDash([sw(3),sw(2)]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
+  } else {
+    ctx.strokeStyle='#1e3a1e';ctx.setLineDash([4,4]);ctx.lineWidth=1;
+    ctx.strokeRect(tx(lz.x),ty(lz.y),sw(lz.w),sw(lz.h));ctx.setLineDash([]);
+  }
 
   // ── TRUCK YARDS ──
   yards.forEach(y=>{
+    if(y.w<=0||y.h<=0)return;
     ctx.fillStyle='#0c1e0c';ctx.fillRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
     ctx.strokeStyle='#3dff9a';ctx.lineWidth=1;ctx.strokeRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
-    // dock hatch marks
-    const hatchStep=3;
-    ctx.strokeStyle='rgba(61,255,154,0.15)';ctx.lineWidth=0.4;
-    for(let hx=0;hx<y.w;hx+=hatchStep){ctx.beginPath();ctx.moveTo(tx(y.x+hx),ty(y.y));ctx.lineTo(tx(y.x+hx),ty(y.y+y.h));ctx.stroke();}
-    if(sw(y.h)>16){
-      ctx.fillStyle='#3dff9a';ctx.font=`bold ${Math.max(8,sw(2.2))}px Barlow Condensed`;
-      ctx.textAlign='center';ctx.fillText(y.label,tx(y.x+y.w/2),ty(y.y+y.h/2)+4);
-    }
+    ctx.strokeStyle='rgba(61,255,154,0.12)';ctx.lineWidth=0.4;
+    for(let hx=0;hx<y.w;hx+=3){ctx.beginPath();ctx.moveTo(tx(y.x+hx),ty(y.y));ctx.lineTo(tx(y.x+hx),ty(y.y+y.h));ctx.stroke();}
+    if(sw(y.h)>16){ctx.fillStyle='#3dff9a';ctx.font=`bold ${Math.max(8,sw(2.2))}px Barlow Condensed`;ctx.textAlign='center';ctx.fillText(y.label,tx(y.x+y.w/2),ty(y.y+y.h/2)+4);}
   });
 
   // ── STRAIGHT RAMPS ──
   sramps.forEach(r=>{
+    if(r.w<=0||r.h<=0)return;
     ctx.fillStyle='#1f0d00';ctx.fillRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
     ctx.strokeStyle='#ff6b35';ctx.lineWidth=1.2;ctx.strokeRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
     ctx.strokeStyle='rgba(255,107,53,0.3)';ctx.lineWidth=0.5;
     for(let ri=0;ri<r.h;ri+=2){ctx.beginPath();ctx.moveTo(tx(r.x),ty(r.y+ri));ctx.lineTo(tx(r.x+r.w),ty(r.y+ri));ctx.stroke();}
-    if(sw(r.h)>16){ctx.fillStyle='#ff6b35';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';ctx.fillText(`STR ${r.slopeStr}`,tx(r.x+r.w/2),ty(r.y+r.h/2)+3);}
+    if(sw(r.h)>16){ctx.fillStyle='#ff6b35';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';ctx.fillText('STR '+r.slopeStr,tx(r.x+r.w/2),ty(r.y+r.h/2)+3);}
   });
 
-  // ── U-RAMP (semi-circular, like reference photo) ──
+  // ── U-RAMP ──
   if(uRamp){
-    const rx=tx(uRamp.x);
-    const ry=ty(uRamp.y);
-    const rW=sw(uRamp.w);
-    const rStrLpx=sw(uRamp.strL);
-    const rIn=sw(uRamp.innerR);
-    const rOut=sw(uRamp.outerR);
-    const headCx=rx+rW/2;
-    const headCy=ry+rStrLpx;
-
+    const rx=tx(uRamp.x),ry=ty(uRamp.y),rW=sw(uRamp.w),rStrLpx=sw(uRamp.strL);
+    const rIn=sw(uRamp.innerR),rOut=sw(uRamp.outerR);
+    const headCx=rx+rW/2,headCy=ry+rStrLpx;
     ctx.save();
-    // Draw U-shape: outer boundary
-    ctx.beginPath();
-    // Left outer edge going down
-    ctx.moveTo(rx,ry);
-    ctx.lineTo(rx,ry+rStrLpx);
-    // Semi-circle outer (bottom)
+    ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rx,ry+rStrLpx);
     ctx.arc(headCx,headCy,rOut,Math.PI,0,true);
-    // Right outer edge going up
-    ctx.lineTo(rx+rW,ry);
-    // Close across top
-    ctx.lineTo(rx,ry);
+    ctx.lineTo(rx+rW,ry);ctx.lineTo(rx,ry);
     ctx.fillStyle='rgba(30,10,50,0.85)';ctx.fill();
     ctx.strokeStyle='#b47fff';ctx.lineWidth=1.5;ctx.stroke();
-
-    // Inner cutout (open top)
-    ctx.beginPath();
-    ctx.moveTo(rx+rOut-rIn,ry);
-    ctx.lineTo(rx+rOut-rIn,ry+rStrLpx);
-    ctx.arc(headCx,headCy,rIn,Math.PI,0,true);
-    ctx.lineTo(rx+rOut+rIn,ry);
+    ctx.beginPath();ctx.moveTo(rx+rOut-rIn,ry);ctx.lineTo(rx+rOut-rIn,ry+rStrLpx);
+    ctx.arc(headCx,headCy,rIn,Math.PI,0,true);ctx.lineTo(rx+rOut+rIn,ry);
     ctx.strokeStyle='rgba(180,127,255,0.5)';ctx.lineWidth=1;ctx.stroke();
     ctx.fillStyle='rgba(10,6,20,0.9)';ctx.fill();
-
-    // Slope hatch lines along the ramp
-    ctx.strokeStyle='rgba(180,127,255,0.2)';ctx.lineWidth=0.5;
-    for(let a=0;a<=Math.PI;a+=Math.PI/12){
-      ctx.beginPath();
-      ctx.moveTo(headCx+Math.cos(Math.PI+a)*rIn,headCy+Math.sin(Math.PI+a)*rIn);
-      ctx.lineTo(headCx+Math.cos(Math.PI+a)*rOut,headCy+Math.sin(Math.PI+a)*rOut);
-      ctx.stroke();
-    }
-
-    // Labels
     ctx.fillStyle='#b47fff';ctx.font=`bold ${Math.max(8,sw(2))}px Barlow Condensed`;
-    ctx.textAlign='center';
-    ctx.fillText('U-RAMP',headCx,headCy+4);
-    ctx.font=`${Math.max(7,sw(1.3))}px Space Mono`;
-    ctx.fillText('1:20 curve · 1:12 str',headCx,headCy+14);
-    // Dimension labels
-    ctx.fillStyle='rgba(180,127,255,0.6)';ctx.font=`${Math.max(7,sw(1.2))}px Space Mono`;
-    ctx.textAlign='left';
-    ctx.fillText(`R_in=${uRamp.innerR}m`,headCx+rIn+2,headCy+2);
-    ctx.fillText(`R_out=${uRamp.outerR}m`,headCx+rOut+2,headCy+12);
+    ctx.textAlign='center';ctx.fillText('U-RAMP',headCx,headCy+4);
     ctx.restore();
   }
 
   // ── CYLINDRICAL HELIX ──
   if(cylRamp){
-    const cpx=tx(cylRamp.cx),cpy=ty(cylRamp.cy);
-    const rC=sw(cylRamp.coreR),rO=sw(cylRamp.outerR);
+    const cpx=tx(cylRamp.cx),cpy=ty(cylRamp.cy),rC=sw(cylRamp.coreR),rO=sw(cylRamp.outerR);
     ctx.save();
     ctx.beginPath();ctx.arc(cpx,cpy,rO,0,Math.PI*2,false);ctx.arc(cpx,cpy,rC,0,Math.PI*2,true);
-    ctx.fillStyle='#0a1e2e';ctx.fill();
-    ctx.strokeStyle='#47c8ff';ctx.lineWidth=1.5;ctx.stroke();
-    for(let t=0;t<cylRamp.turns*Math.PI*2;t+=0.4){
-      const r=rC+(rO-rC)*0.5;
-      ctx.beginPath();ctx.arc(cpx+Math.cos(t)*r,cpy+Math.sin(t)*r,1.5,0,Math.PI*2);
-      ctx.fillStyle='rgba(71,200,255,0.5)';ctx.fill();
-    }
-    ctx.beginPath();ctx.arc(cpx,cpy,rC,0,Math.PI*2);ctx.strokeStyle='rgba(71,200,255,0.3)';ctx.lineWidth=0.8;ctx.stroke();
+    ctx.fillStyle='#0a1e2e';ctx.fill();ctx.strokeStyle='#47c8ff';ctx.lineWidth=1.5;ctx.stroke();
     ctx.fillStyle='#47c8ff';ctx.font=`bold ${Math.max(8,sw(1.8))}px Barlow Condensed`;
     ctx.textAlign='center';ctx.fillText('CYL',cpx,cpy-4);
-    ctx.font=`${Math.max(7,sw(1.3))}px Space Mono`;ctx.fillText(`${cylRamp.turns}T`,cpx,cpy+9);
     ctx.restore();
   }
 
-  // ── BUILDINGS (with 2m green strip outline) ──
+  // ── BUILDINGS ──
   const BCOL=['#47c8ff','#b47fff','#3dff9a','#ffb347'];
   const BFIL=['#0d1e2e','#1a0d2e','#0d2010','#2a1a08'];
   buildings.forEach(bldg=>{
-    const ci=bldg.ci;
-    // Green strip around building (2m)
-    ctx.fillStyle='rgba(30,60,20,0.4)';
+    if(bldg.w<=0||bldg.h<=0)return;
+    const ci=bldg.ci%4;
+    // 2m green strip
+    ctx.fillStyle='rgba(30,60,20,0.35)';
     ctx.fillRect(tx(bldg.x-2),ty(bldg.y-2),sw(bldg.w+4),sw(bldg.h+4));
     // Shadow
-    ctx.fillStyle='rgba(0,0,0,0.2)';ctx.fillRect(tx(bldg.x)+3,ty(bldg.y)+3,sw(bldg.w),sw(bldg.h));
+    ctx.fillStyle='rgba(0,0,0,0.18)';ctx.fillRect(tx(bldg.x)+3,ty(bldg.y)+3,sw(bldg.w),sw(bldg.h));
     // Fill
     ctx.fillStyle=BFIL[ci];ctx.fillRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
     // Border
     ctx.strokeStyle=BCOL[ci];ctx.lineWidth=1.5;ctx.strokeRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
-    // Roof hatch (skylight simulation)
+    // Hatch
     ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=0.5;
     for(let hx=0;hx<bldg.w;hx+=4){ctx.beginPath();ctx.moveTo(tx(bldg.x+hx),ty(bldg.y));ctx.lineTo(tx(bldg.x+hx),ty(bldg.y+bldg.h));ctx.stroke();}
     // Labels
@@ -1183,42 +1109,74 @@ function draw2D(){
     ctx.fillText(`GFA ${bldg.totGFA.toFixed(0)}m²`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)+19);
   });
 
-  // ── MEP AREA ──
-  {const m=R.mepRect;
-  ctx.fillStyle='rgba(30,10,40,0.85)';ctx.fillRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
-  ctx.strokeStyle='#b47fff';ctx.lineWidth=1;ctx.strokeRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
-  ctx.fillStyle='#b47fff';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';
-  if(sw(m.h)>12)ctx.fillText(`MEP ${R.mepAreaTarget}m²`,tx(m.x+m.w/2),ty(m.y+m.h/2)+3);}
+  // ── MEP ──
+  {const m=mepRect;if(m.w>0&&m.h>0){
+    ctx.fillStyle='rgba(30,10,40,0.85)';ctx.fillRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
+    ctx.strokeStyle='#b47fff';ctx.lineWidth=1;ctx.strokeRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
+    ctx.fillStyle='#b47fff';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';
+    if(sw(m.h)>12)ctx.fillText(`MEP ${R.mepAreaTarget}m²`,tx(m.x+m.w/2),ty(m.y+m.h/2)+3);
+  }}
 
   // ── GUARD HOUSE ──
-  {const g=R.ghRect;
-  ctx.fillStyle='rgba(10,20,30,0.9)';ctx.fillRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
-  ctx.strokeStyle='#e8ff47';ctx.lineWidth=1.2;ctx.strokeRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
-  ctx.fillStyle='#e8ff47';ctx.font=`bold ${Math.max(7,sw(1.5))}px Barlow Condensed`;ctx.textAlign='center';
-  if(sw(g.h)>10)ctx.fillText('GH',tx(g.x+g.w/2),ty(g.y+g.h/2)+3);}
+  {const g=ghRect;if(g.w>0&&g.h>0){
+    ctx.fillStyle='rgba(10,20,30,0.9)';ctx.fillRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
+    ctx.strokeStyle='#e8ff47';ctx.lineWidth=1.2;ctx.strokeRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
+    ctx.fillStyle='#e8ff47';ctx.font=`bold ${Math.max(7,sw(1.5))}px Barlow Condensed`;ctx.textAlign='center';
+    if(sw(g.h)>10)ctx.fillText('GH',tx(g.x+g.w/2),ty(g.y+g.h/2)+3);
+  }}
 
-  // ── LOT OUTLINE ──
-  ctx.beginPath();
-  pts.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
-  ctx.closePath();ctx.strokeStyle='#e8ff47';ctx.lineWidth=2;ctx.stroke();
-  pts.forEach(p=>{
+  // End interior clip
+  ctx.restore();
+
+  // ── LOT OUTLINE (drawn after clip restore so it's always on top) ──
+  polyPath(pts);
+  ctx.strokeStyle='#e8ff47';ctx.lineWidth=2;ctx.stroke();
+  pts.forEach((p,i)=>{
     ctx.fillStyle='#e8ff47';ctx.beginPath();ctx.arc(tx(p[0]),ty(p[1]),3,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='rgba(232,255,71,0.5)';ctx.font='8px Space Mono';ctx.textAlign='left';
-    ctx.fillText(`(${p[0].toFixed(0)},${p[1].toFixed(0)})`,tx(p[0])+5,ty(p[1])-4);
+    ctx.fillStyle='rgba(232,255,71,0.6)';ctx.font='8px Space Mono';ctx.textAlign='left';
+    ctx.fillText(`${i+1}:(${p[0].toFixed(0)},${p[1].toFixed(0)})`,tx(p[0])+5,ty(p[1])-4);
   });
 
+  // ── NORTH ARROW ──
+  {const ax=cv.width-36,ay=36,aLen=18;
+   ctx.save();
+   ctx.strokeStyle='#e8ff47';ctx.fillStyle='#e8ff47';ctx.lineWidth=1.5;
+   ctx.beginPath();ctx.moveTo(ax,ay+aLen);ctx.lineTo(ax,ay-aLen);ctx.stroke();
+   ctx.beginPath();ctx.moveTo(ax,ay-aLen);ctx.lineTo(ax-5,ay-aLen+8);ctx.lineTo(ax+5,ay-aLen+8);ctx.closePath();ctx.fill();
+   ctx.font='bold 9px Space Mono';ctx.textAlign='center';ctx.fillText('N',ax,ay-aLen-4);
+   ctx.restore();}
+
+  // ── FRONT ROAD ARROW ──
+  {const fr=R.frontRoad||'bottom';
+   let ax2,ay2,dx,dy,lx,ly;
+   const aL=26;
+   if(fr==='bottom'){ax2=cv.width/2;ay2=cv.height-16;dx=0;dy=-aL;lx=cv.width/2;ly=cv.height-16-aL-5;}
+   else if(fr==='top'){ax2=cv.width/2;ay2=16;dx=0;dy=aL;lx=cv.width/2;ly=16+aL+10;}
+   else if(fr==='left'){ax2=16;ay2=cv.height/2;dx=aL;dy=0;lx=16+aL+4;ly=cv.height/2-4;}
+   else{ax2=cv.width-16;ay2=cv.height/2;dx=-aL;dy=0;lx=cv.width-16-aL-4;ly=cv.height/2-4;}
+   ctx.save();ctx.strokeStyle='#ff6b35';ctx.fillStyle='#ff6b35';ctx.lineWidth=2;
+   ctx.beginPath();ctx.moveTo(ax2,ay2);ctx.lineTo(ax2+dx,ay2+dy);ctx.stroke();
+   const ang=Math.atan2(dy,dx);
+   ctx.beginPath();ctx.moveTo(ax2+dx,ay2+dy);
+   ctx.lineTo(ax2+dx-9*Math.cos(ang-0.4),ay2+dy-9*Math.sin(ang-0.4));
+   ctx.lineTo(ax2+dx-9*Math.cos(ang+0.4),ay2+dy-9*Math.sin(ang+0.4));
+   ctx.closePath();ctx.fill();
+   ctx.font='bold 8px Space Mono';ctx.textAlign='center';ctx.fillText('ROAD',lx,ly);
+   ctx.restore();}
+
   // ── SCALE BAR ──
-  const sm=20,spx=sm*sc,sx=20,sy=cv.height-20;
+  const sm=20,spx=sm*sc,sxb=20,syb=cv.height-20;
   ctx.strokeStyle='#e8ff47';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+spx,sy);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(sx,sy-4);ctx.lineTo(sx,sy+4);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(sx+spx,sy-4);ctx.lineTo(sx+spx,sy+4);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sxb,syb);ctx.lineTo(sxb+spx,syb);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sxb,syb-4);ctx.lineTo(sxb,syb+4);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sxb+spx,syb-4);ctx.lineTo(sxb+spx,syb+4);ctx.stroke();
   ctx.fillStyle='#e8ff47';ctx.font='9px Space Mono';ctx.textAlign='center';
-  ctx.fillText(`${sm}m`,sx+spx/2,sy-7);
+  ctx.fillText(`${sm}m`,sxb+spx/2,syb-7);
 
   document.getElementById('scaleInfo').textContent=
-    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}%`;
+    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% · LZ ${lz.w.toFixed(0)}×${lz.h.toFixed(0)}m`;
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 // 3D CANVAS
