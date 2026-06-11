@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Industrial Warehouse Test-Fit Simulator v4.4</title>
+<title>Industrial Warehouse Test-Fit Simulator v4.5</title>
 <!-- Google Maps loaded dynamically when map tab opened -->
 <!-- Extended Component Library for gmp-map, gmpx-place-picker, gmp-advanced-marker -->
 <script async defer src="https://ajax.googleapis.com/ajax/libs/extended-component-library/0.6.11/index.min.js"></script>
@@ -134,7 +134,7 @@ gmpx-place-picker{
 <body>
 <header>
   <div class="logo">TESTFIT <span>//</span> WAREHOUSE</div>
-  <div class="tag">v4.4</div>
+  <div class="tag">v4.5</div>
   <div class="tag" style="color:var(--accent2);border-color:var(--accent2)">True North Lock</div>
   <div class="tag" style="color:var(--green);border-color:var(--green)">Polygon Clipping</div>
   <div class="tag" style="color:var(--amber);border-color:var(--amber)">CAD Export</div>
@@ -210,13 +210,13 @@ gmpx-place-picker{
     <div class="g3">
       <div><label>Floor Ht (m)</label><input type="number" id="fh" value="7" min="4" max="15" step="0.5"></div>
       <div><label>Yard W (m)</label><input type="number" id="yW" value="20" min="15" max="50" step="1"></div>
-      <div><label>BUAR</label><input type="number" id="buar" value="2.5" min="0.5" max="6" step="0.1"></div>
+      <div><label>Office Mezz %</label><input type="number" id="offP" value="3" min="1" max="15" step="0.5"></div>
     </div>
     <div class="g2">
-      <div><label>Office Mezz %/Level</label><input type="number" id="offP" value="3" min="1" max="15" step="0.5"></div>
       <div><label>Parking Stall</label>
         <select id="stallSz"><option value="12.5">2.5×5.0m Std</option><option value="13.5">2.7×5.0m Wide</option></select>
       </div>
+      <div><label>Min Landscape %</label><input type="number" id="minL" value="10" min="5" max="40"></div>
     </div>
   </div>
 
@@ -273,9 +273,14 @@ gmpx-place-picker{
   <div class="sec">
     <div class="stitle">Zoning Rules</div>
     <div class="g2">
+      <div><label>Min Plinth %</label><input type="number" id="minP" value="60" min="20" max="80"></div>
       <div><label>Max Plinth %</label><input type="number" id="maxP" value="70" min="30" max="90"></div>
-      <div><label>Min Landscape %</label><input type="number" id="minL" value="10" min="5" max="40"></div>
     </div>
+    <div class="g2" style="margin-top:4px">
+      <div><label>Min Landscape %</label><input type="number" id="minL" value="10" min="5" max="40"></div>
+      <div><label>BUAR Limit</label><input type="number" id="buar" value="2.5" min="0.5" max="6" step="0.1"></div>
+    </div>
+    <div style="font-size:8px;color:var(--dim);margin-top:3px;line-height:1.5;">Engine scales buildings to maximise plinth within Min–Max % band.</div>
   </div>
 
   <div class="sec">
@@ -816,6 +821,17 @@ function runSim(){
   const rampReserveW=Math.max(uRampDiam,cylDiam);
   const effW=Math.max(20,lz.w-rampReserveW);
 
+  // ── PLINTH TARGETS ────────────────────────────────────────────
+  // Engine will scale building dimensions to hit the 60-70% band.
+  // Plinth = (building footprints + yards + ramps + MEP + GH) / lotArea
+  const minPlinthPct = +document.getElementById('minP').value;  // e.g. 60
+  const maxPlinthPct = +document.getElementById('maxP').value;  // e.g. 70
+  const minPlinthArea = lotArea * minPlinthPct / 100;
+  const maxPlinthArea = lotArea * maxPlinthPct / 100;
+
+  // Fixed footprints (not buildings)
+  const fixedArea = mepAreaTarget + ghArea;
+
   // MEP — bottom-right of lz
   let mepW=Math.min(Math.sqrt(mepAreaTarget*1.5),effW*0.35);
   let mepH=mepAreaTarget/mepW;
@@ -833,9 +849,55 @@ function runSim(){
     default:       ghRect={x:lz.x,          y:lz.y+lz.h-ghH,w:ghW,h:ghH};
   }
 
-  // Building layout — all inside lz, hard-clamped
+  const minYardW=28, yardW=Math.max(yW,20);
+
+  // ── PLINTH OPTIMISATION LOOP ──────────────────────────────────
+  // Strategy: compute the total vertical space consumed by yards + gaps,
+  // then iterate a `bldgHeightScale` factor (0.5 → 1.0) to grow buildings
+  // until plinth hits the [minPlinthPct, maxPlinthPct] band.
+  // Width stays = effW (full layout zone width) for maximum coverage.
+
+  // Fixed vertical costs per config
+  let fixedVertical = mepH + 2; // MEP reserve at bottom
+  if(nBldgs===1) fixedVertical += 0;
+  else if(nBldgs===2) fixedVertical += yardW;
+  else if(nBldgs===3) fixedVertical += yardW + Math.max(minYardW, yardW);
+  else fixedVertical += yardW * 2;
+
+  const availH = Math.max(10, lz.h - fixedVertical);
+  const bldgCount = nBldgs;
+
+  // Ramp footprint estimate (constant regardless of scale)
+  const uRampFPest = useCir ? (crStrL*crOut*2+Math.PI*crOut*crOut/2) : 0;
+  const cylFPest   = useCyl ? Math.PI*((cylR+cylW)**2-cylR**2) : 0;
+  const rampFPest  = uRampFPest + cylFPest;
+  const yardFP     = nBldgs===1?0 : nBldgs===2?effW*yardW : nBldgs===3?effW*(yardW+Math.max(minYardW,yardW)) : effW*yardW*2;
+
+  // Binary-search for the building height scale that hits ≤ maxPlinthPct
+  // Start by trying full height, then pull back if over max.
+  function calcPlinthForScale(scale){
+    const bh = Math.max(5, (availH * scale) / bldgCount);
+    const bldgFP = effW * bh * bldgCount;
+    return bldgFP + yardFP + rampFPest + fixedArea;
+  }
+
+  let bestScale = 1.0;
+  // First find scale that hits maxPlinthPct (cap)
+  let lo=0.05, hi=1.0;
+  for(let iter=0;iter<32;iter++){
+    const mid=(lo+hi)/2;
+    if(calcPlinthForScale(mid)/lotArea*100 <= maxPlinthPct) lo=mid; else hi=mid;
+  }
+  bestScale = lo;
+
+  // If even at bestScale we're below minPlinthPct, we're already constrained by geometry —
+  // just use max possible (lo is already the highest that fits under maxPlinthPct).
+  // If at scale=1.0 plinth < minPlinthPct the lot is too large for the building count —
+  // that's OK, we report it as a warning in compliance.
+
+  // ── BUILD ELEMENTS AT OPTIMISED SCALE ─────────────────────────
   const buildings=[],yards=[],sramps=[];
-  const minYardW=28,yardW=Math.max(yW,20);
+  const bldgH = Math.max(5, (availH * bestScale) / bldgCount);
 
   function addBldg(id,bx,by,bw,bh,ci){
     bx=Math.max(lz.x,bx);
@@ -860,30 +922,30 @@ function runSim(){
   }
 
   if(nBldgs===1){
-    addBldg(1,lz.x,lz.y,effW,lz.h-mepH-2,0);
+    addBldg(1,lz.x,lz.y,effW,bldgH,0);
   }else if(nBldgs===2){
-    const bh=Math.max(10,(lz.h-yardW)/2);
+    const bh=bldgH;
     addBldg(1,lz.x,lz.y,effW,bh,0);
     addYard(lz.x,lz.y+bh,effW,yardW,'Truck Yard 1');
-    addBldg(2,lz.x,lz.y+bh+yardW,effW,Math.max(10,lz.h-bh-yardW),1);
+    addBldg(2,lz.x,lz.y+bh+yardW,effW,bh,1);
   }else if(nBldgs===3){
     const sy=Math.max(minYardW,yardW);
-    const bh=Math.max(10,(lz.h-yardW-sy)/3);
+    const bh=bldgH;
     let c=lz.y;
     addBldg(1,lz.x,c,effW,bh,0);c+=bh;
     addYard(lz.x,c,effW,yardW,'Truck Yard 1 (Shared B1-B2)');c+=yardW;
     addBldg(2,lz.x,c,effW,bh,1);c+=bh;
     addYard(lz.x,c,effW,sy,'Truck Yard 2 · B3 ('+sy.toFixed(0)+'m)');c+=sy;
-    addBldg(3,lz.x,c,effW,Math.max(10,lz.y+lz.h-c-mepH-2),2);
+    addBldg(3,lz.x,c,effW,bh,2);
   }else{
-    const bh=Math.max(10,(lz.h-yardW*2)/4);
+    const bh=bldgH;
     let c=lz.y;
     addBldg(1,lz.x,c,effW,bh,0);c+=bh;
     addBldg(2,lz.x,c,effW,bh,1);c+=bh;
     addYard(lz.x,c,effW,yardW,'Truck Yard 1 (B1-B2)');c+=yardW;
     addBldg(3,lz.x,c,effW,bh,2);c+=bh;
     addYard(lz.x,c,effW,yardW,'Truck Yard 2 (B3-B4)');c+=yardW;
-    addBldg(4,lz.x,c,effW,Math.max(10,lz.y+lz.h-c-mepH-2),3);
+    addBldg(4,lz.x,c,effW,bh,3);
   }
 
   // U-ramp
@@ -904,8 +966,66 @@ function runSim(){
       footprint:Math.PI*((cylR+cylW)**2-cylR**2)};
   }
 
-  // Perimeter parking — inside fire road band, clipped to lot polygon via canvas
-  const stallDepth=5,parkingInset=periGreen+fireRoad;
+  // ── POLYGON-EDGE PARKING ─────────────────────────────────────────────────
+  // Place parking stalls along each ACTUAL polygon edge (not bbox),
+  // inset by periGreen+fireRoad from the edge, depth = stallDepth into lot.
+  // Each edge gets a row of stalls oriented perpendicular to the edge.
+  const stallDepth=5, stallWidth=2.5, aisleW=6;
+  const parkingInset=periGreen+fireRoad;
+  const parkingEdgeRows=[];  // [{pts:[4 corners], edge, count, length}]
+
+  (function buildEdgeParking(){
+    const n=pts.length;
+    for(let i=0;i<n;i++){
+      const a=pts[i], b2=pts[(i+1)%n];
+      const ex=b2[0]-a[0], ey=b2[1]-a[1];
+      const edgeLen=Math.hypot(ex,ey);
+      if(edgeLen<stallWidth*2) continue;
+
+      // Unit vectors: along edge and inward normal
+      const ux=ex/edgeLen, uy=ey/edgeLen;
+      // Inward normal: for CCW polygon, inward = rotate edge dir 90° CW = (uy, -ux)
+      // Check winding first
+      let area=0;
+      for(let k=0;k<n;k++){const j=(k+1)%n;area+=pts[k][0]*pts[j][1]-pts[j][0]*pts[k][1];}
+      const ccw=area>0;
+      const nx=ccw?uy:-uy, ny=ccw?-ux:ux;
+
+      // Inset along edge: start and end points, pulled in by parkingInset from each end
+      const margin=parkingInset+2;
+      const rowLen=edgeLen-margin*2;
+      if(rowLen<stallWidth) continue;
+
+      // Origin of the stall row (inset from edge by parkingInset, then stallDepth)
+      // Stalls sit with back against the inset edge, facing inward
+      const ox=a[0]+ux*margin + nx*parkingInset;
+      const oy=a[1]+uy*margin + ny*parkingInset;
+
+      const stallCount=Math.floor(rowLen/stallWidth);
+      if(stallCount<1) continue;
+
+      // Store as array of individual stalls (each a quad)
+      const stalls=[];
+      for(let s=0;s<stallCount;s++){
+        const sx=ox+ux*s*stallWidth;
+        const sy=oy+uy*s*stallWidth;
+        stalls.push([
+          [sx,           sy          ],
+          [sx+ux*stallWidth, sy+uy*stallWidth],
+          [sx+ux*stallWidth+nx*stallDepth, sy+uy*stallWidth+ny*stallDepth],
+          [sx+nx*stallDepth, sy+ny*stallDepth]
+        ]);
+      }
+      parkingEdgeRows.push({
+        stalls, edgeIdx:i,
+        edgeLen, stallCount,
+        ux,uy,nx,ny,
+        ox,oy, rowLen
+      });
+    }
+  })();
+
+  // Legacy parkingRows kept for compliance count (areas only)
   const parkingRows={
     top:  {x:b.minX+parkingInset,y:b.minY+parkingInset,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
     btm:  {x:b.minX+parkingInset,y:b.maxY-parkingInset-stallDepth,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
@@ -929,13 +1049,26 @@ function runSim(){
   const buarActual=totGFA/lotArea;
   const parking=calcParking(totWhGFA,totOffGFA,stallArea);
 
+  // Plinth status feedback
+  const plinthOk = plinthPct>=minPlinthPct && plinthPct<=maxPlinthPct;
+  const plinthMsg = plinthOk
+    ? `✓ Plinth ${plinthPct.toFixed(1)}% — within ${minPlinthPct}–${maxPlinthPct}% target band`
+    : plinthPct<minPlinthPct
+      ? `⚠ Plinth ${plinthPct.toFixed(1)}% — below ${minPlinthPct}% minimum (lot may be too large for ${nBldgs} building${nBldgs>1?'s':''})`
+      : `⚠ Plinth ${plinthPct.toFixed(1)}% — exceeds ${maxPlinthPct}% maximum`;
+  okEl.textContent=(okEl.textContent?okEl.textContent+' · ':'')+plinthMsg;
+  okEl.style.display='block';
+  okEl.style.borderColor=plinthOk?'var(--green)':plinthPct<minPlinthPct?'var(--amber)':'var(--red)';
+  okEl.style.color=plinthOk?'var(--green)':plinthPct<minPlinthPct?'var(--amber)':'var(--red)';
+
   R={
     pts,rawPts,isLatLon,b,bz:lz,lz,bzPolyDir,
     buildings,yards,sramps,uRamp,cylRamp,
-    parkingRows,mepRect,ghRect,
+    parkingRows,parkingEdgeRows,mepRect,ghRect,
     lotArea,maxGFA,buar,buarActual,
     totWhGFA,totOffGFA,totGFA,totFP,totYard,totRamp,totStrRamp,uRampFP,cylFP,
     totPlinth,plinthPct,lscArea,lscPct,
+    minPlinthPct,maxPlinthPct,
     maxP,minL,nStor,fh,nBldgs,yW,stallArea,
     useStr,useCir,useCyl,srW,srL,srSlope,
     crIn,crOut,crStrL,crW,crDir,cylR,cylW,cylTurns,
@@ -1010,18 +1143,27 @@ function draw2D(){
   polyPath(pts);
   ctx.clip();
 
-  // ── PARKING ROWS — clipped stalls ──
-  const drawParkingRow=(rx,ry,rw,rh,vertical)=>{
-    if(rw<=0||rh<=0)return;
-    ctx.fillStyle='rgba(26,26,8,0.8)';ctx.fillRect(tx(rx),ty(ry),sw(rw),sw(rh));
-    ctx.strokeStyle='rgba(255,179,71,0.5)';ctx.lineWidth=0.5;
-    ctx.strokeRect(tx(rx),ty(ry),sw(rw),sw(rh));
-    const stallW=2.5;
-    ctx.strokeStyle='rgba(255,179,71,0.2)';ctx.lineWidth=0.4;
-    if(!vertical){for(let sx=0;sx<rw;sx+=stallW){ctx.beginPath();ctx.moveTo(tx(rx+sx),ty(ry));ctx.lineTo(tx(rx+sx),ty(ry+rh));ctx.stroke();}}
-    else{for(let sy=0;sy<rh;sy+=stallW){ctx.beginPath();ctx.moveTo(tx(rx),ty(ry+sy));ctx.lineTo(tx(rx+rw),ty(ry+sy));ctx.stroke();}}
-  };
-  Object.values(parkingRows).forEach((pr,i)=>drawParkingRow(pr.x,pr.y,pr.w,pr.h,i>=2));
+  // ── POLYGON-EDGE PARKING STALLS ──
+  // Each stall is a quad aligned to the actual polygon edge (handles slanted lots).
+  if(R.parkingEdgeRows && R.parkingEdgeRows.length){
+    R.parkingEdgeRows.forEach(row=>{
+      row.stalls.forEach(stall=>{
+        ctx.beginPath();
+        stall.forEach(([sx,sy],si)=>si===0?ctx.moveTo(tx(sx),ty(sy)):ctx.lineTo(tx(sx),ty(sy)));
+        ctx.closePath();
+        ctx.fillStyle='rgba(26,26,8,0.85)';ctx.fill();
+        ctx.strokeStyle='rgba(255,179,71,0.55)';ctx.lineWidth=0.6;ctx.stroke();
+      });
+      // Stall divider lines (perpendicular to edge)
+      ctx.strokeStyle='rgba(255,179,71,0.22)';ctx.lineWidth=0.4;
+      row.stalls.forEach(stall=>{
+        ctx.beginPath();
+        ctx.moveTo(tx(stall[0][0]),ty(stall[0][1]));
+        ctx.lineTo(tx(stall[3][0]),ty(stall[3][1]));
+        ctx.stroke();
+      });
+    });
+  }
 
   // ── BUILDABLE ZONE outline (dashed inset polygon) ──
   if(bzPolyDir && bzPolyDir.length>=3){
@@ -1173,8 +1315,10 @@ function draw2D(){
   ctx.fillStyle='#e8ff47';ctx.font='9px Space Mono';ctx.textAlign='center';
   ctx.fillText(`${sm}m`,sxb+spx/2,syb-7);
 
+  const plinthOk2 = R.plinthPct>=R.minPlinthPct && R.plinthPct<=R.maxPlinthPct;
   document.getElementById('scaleInfo').textContent=
-    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · BUAR ${R.buarActual.toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% · LZ ${lz.w.toFixed(0)}×${lz.h.toFixed(0)}m`;
+    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · FAR ${(R.totGFA/R.lotArea).toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% [${R.minPlinthPct}–${R.maxPlinthPct}%] · LZ ${lz.w.toFixed(0)}×${lz.h.toFixed(0)}m`;
+  document.getElementById('scaleInfo').style.color = plinthOk2 ? 'var(--green)' : 'var(--amber)';
 }
 
 
@@ -1340,16 +1484,51 @@ function renderGFA(){
   <tr><td>Guard House</td><td>${ghArea}</td><td>40m² at main entrance/exit</td></tr>
   </tbody></table></div>`;
 
+  // FAR = Total GFA / Lot Area (same as BUAR)
+  const far=totGFA/lotArea;
+  const plinthBandOk=R.plinthPct>=R.minPlinthPct&&R.plinthPct<=R.maxPlinthPct;
+  const plinthStatus=plinthBandOk?'✓ In Band':R.plinthPct<R.minPlinthPct?'↑ Below Min':'↓ Exceeds Max';
+  const plinthColor=plinthBandOk?'var(--green)':R.plinthPct<R.minPlinthPct?'var(--amber)':'var(--red)';
+
   h+=`<div class="sb" style="border-color:var(--accent)"><div class="sbt" style="color:var(--accent)">Project Summary</div>
-  <table class="tbl"><thead><tr><th>Item</th><th>Area (m²)</th><th>% of Lot</th><th>Remarks</th></tr></thead><tbody>
+  <table class="tbl"><thead><tr><th>Item</th><th>Area (m²)</th><th>Ratio / %</th><th>Remarks</th></tr></thead><tbody>
   <tr><td>Warehouse GFA</td><td>${totWhGFA.toFixed(0)}</td><td>${((totWhGFA/lotArea)*100).toFixed(1)}%</td><td>All storeys, all bldgs</td></tr>
-  <tr><td>Office Mezz GFA</td><td>${totOffGFA.toFixed(1)}</td><td>${((totOffGFA/lotArea)*100).toFixed(1)}%</td><td>3% WH GFA per level</td></tr>
-  <tr><td>Total GFA</td><td>${totGFA.toFixed(0)}</td><td>${((totGFA/lotArea)*100).toFixed(1)}%</td><td>WH + Office</td></tr>
-  <tr><td>Max Allowable GFA</td><td>${maxGFA.toFixed(0)}</td><td>—</td><td>Lot × BUAR (${buar})</td></tr>
-  <tr><td>Total Plinth</td><td>${R.totPlinth.toFixed(0)}</td><td>${R.plinthPct.toFixed(1)}%</td><td>Bldgs+Yards+Ramps+MEP+GH</td></tr>
-  <tr><td>Landscape / Open</td><td>${R.lscArea.toFixed(0)}</td><td>${R.lscPct.toFixed(1)}%</td><td>Incl. green strips</td></tr>
+  <tr><td>Office Mezz GFA</td><td>${totOffGFA.toFixed(1)}</td><td>${((totOffGFA/lotArea)*100).toFixed(1)}%</td><td>% WH GFA per level</td></tr>
+  <tr><td>Total GFA</td><td>${totGFA.toFixed(0)}</td><td>${((totGFA/lotArea)*100).toFixed(1)}%</td><td>WH + Office combined</td></tr>
+  <tr><td>Max Allowable GFA</td><td>${maxGFA.toFixed(0)}</td><td>BUAR ${buar}×</td><td>Lot × BUAR limit</td></tr>
+  <tr style="background:#0a1a2a"><td><strong>Floor Area Ratio (FAR)</strong></td><td><strong style="color:var(--accent2);font-size:13px">${far.toFixed(3)}</strong></td><td style="color:var(--accent2)">${far.toFixed(2)} : 1</td><td>Total GFA ÷ Lot Area</td></tr>
+  <tr style="background:#0a1a0a"><td><strong>Plinth Coverage</strong></td><td><strong>${R.totPlinth.toFixed(0)}</strong></td><td style="color:${plinthColor};font-weight:700">${R.plinthPct.toFixed(1)}% · ${plinthStatus}</td><td>Target ${R.minPlinthPct}–${R.maxPlinthPct}% | Bldgs+Yards+Ramps+MEP+GH</td></tr>
+  <tr><td>Landscape / Open</td><td>${R.lscArea.toFixed(0)}</td><td>${R.lscPct.toFixed(1)}%</td><td>Incl. green strips &amp; unbuilt area</td></tr>
   <tr class="tot"><td>Lot Area</td><td>${lotArea.toFixed(0)}</td><td>100%</td><td>—</td></tr>
   </tbody></table></div>`;
+
+  // FAR + Plinth summary cards
+  h+=`<div class="cg" style="margin-top:8px">
+    <div class="cc ${plinthBandOk?'pass':R.plinthPct<R.minPlinthPct?'warn':'fail'}">
+      <div class="cl">Plinth Coverage</div>
+      <div class="cv">${R.plinthPct.toFixed(1)}<span style="font-size:14px">%</span></div>
+      <div class="cs">Target ${R.minPlinthPct}–${R.maxPlinthPct}%</div>
+      <div class="cst">${plinthStatus}</div>
+    </div>
+    <div class="cc info">
+      <div class="cl">Floor Area Ratio</div>
+      <div class="cv">${far.toFixed(2)}</div>
+      <div class="cs">Total GFA / Lot Area</div>
+      <div class="cst">${far.toFixed(3)} : 1</div>
+    </div>
+    <div class="cc info">
+      <div class="cl">BUAR (Used)</div>
+      <div class="cv">${buarActual.toFixed(2)}</div>
+      <div class="cs">Limit: ${buar}×</div>
+      <div class="cst">${buarActual<=buar?'✓ Within Limit':'✗ Exceeded'}</div>
+    </div>
+    <div class="cc ${R.lscPct>=R.minL?'pass':'fail'}">
+      <div class="cl">Landscape</div>
+      <div class="cv">${R.lscPct.toFixed(1)}<span style="font-size:14px">%</span></div>
+      <div class="cs">Min ${R.minL}%</div>
+      <div class="cst">${R.lscPct>=R.minL?'✓ PASS':'✗ FAIL'}</div>
+    </div>
+  </div>`;
 
   el.innerHTML=h;
 }
@@ -1406,8 +1585,11 @@ function renderCompliance(){
     const d=typeof val==='number'?val.toFixed(1):val;
     return`<div class="cc ${c}"><div class="cl">${label}</div><div class="cv">${d}${unit}</div><div class="cs">${sub}</div><div class="cst">${ok?'✓ PASS':'✗ FAIL'}</div></div>`;
   }
+  const farComp=totGFA/lotArea;
+  const plinthBandPassComp=plinthPct>=R.minPlinthPct&&plinthPct<=maxP;
   let h=`<div class="cg">
-    ${cc('Plinth',plinthPct,`≤${maxP}%`,plinthPct<=maxP)}
+    ${cc('Plinth',plinthPct,`${R.minPlinthPct}–${maxP}%`,plinthBandPassComp)}
+    ${cc('FAR',farComp.toFixed(2),`≤${buar} (BUAR)`,farComp<=buar,'')}
     ${cc('Landscape',lscPct,`≥${minL}%`,lscPct>=minL)}
     ${cc('BUAR',buarActual,`≤${buar}`,buarActual<=buar)}
     ${cc('GFA',(totGFA/1000).toFixed(2),`${totGFA.toFixed(0)}m²`,totGFA<=maxGFA,'k m²','info')}
@@ -1416,8 +1598,11 @@ function renderCompliance(){
     ${cc('MEP',mepAreaTarget,`≥600m²`,mepAreaTarget>=600,'m²','info')}
     ${cc('Guard House',ghArea,`≥40m²`,ghArea>=40,'m²','info')}
   </div>`;
+  const farVal=totGFA/lotArea;
   const rules=[
-    {l:`Plinth ≤ ${maxP}%`,ok:plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
+    {l:`Plinth ${R.minPlinthPct}–${R.maxPlinthPct}% (target band)`,ok:plinthPct>=R.minPlinthPct&&plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
+    {l:`Plinth ≤ ${maxP}% (hard max)`,ok:plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
+    {l:`FAR (= BUAR actual): ${farVal.toFixed(3)}`,ok:farVal<=buar,v:farVal.toFixed(3)+' : 1'},
     {l:`Landscape ≥ ${minL}%`,ok:lscPct>=minL,v:lscPct.toFixed(1)+'%'},
     {l:`BUAR ≤ ${buar}`,ok:buarActual<=buar,v:buarActual.toFixed(3)},
     {l:'GFA within BUAR limit',ok:totGFA<=maxGFA,v:totGFA.toFixed(0)+'m²'},
