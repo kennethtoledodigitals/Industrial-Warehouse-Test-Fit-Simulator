@@ -484,10 +484,6 @@ function ptInPoly(px,py,poly){
   }
   return inside;
 }
-function insetBbox(pts,top,btm,left,right){
-  const b=bbox(pts);
-  return{x:b.minX+left,y:b.minY+top,w:Math.max(0,b.maxX-b.minX-left-right),h:Math.max(0,b.maxY-b.minY-top-btm)};
-}
 
 // ── Polygon centroid ──
 function polyCentroid(pts){
@@ -501,6 +497,7 @@ function polyCentroid(pts){
     cy+=(pts[i][1]+pts[j][1])*cross;
   }
   area/=2;
+  if(Math.abs(area) < 1e-9) return [pts[0][0], pts[0][1]];
   cx/=(6*area); cy/=(6*area);
   return[cx,cy];
 }
@@ -516,7 +513,6 @@ function rotatePoly(pts,angle,cx,cy){
 
 // ── Sutherland-Hodgman polygon clipping ──
 function clipPolyByHalfPlane(poly,[ax,ay],[bx,by]){
-  // Clip poly to the left of edge A→B
   const out=[];
   const n=poly.length;
   for(let i=0;i<n;i++){
@@ -525,75 +521,113 @@ function clipPolyByHalfPlane(poly,[ax,ay],[bx,by]){
     const nxtIn=((bx-ax)*(nxt[1]-ay)-(by-ay)*(nxt[0]-ax))>=0;
     if(curIn) out.push(cur);
     if(curIn!==nxtIn){
-      // Compute intersection
       const dx=nxt[0]-cur[0],dy=nxt[1]-cur[1];
       const ex=bx-ax,ey=by-ay;
-      const t=((ax-cur[0])*ey-(ay-cur[1])*ex)/(dx*ey-dy*ex);
-      out.push([cur[0]+t*dx,cur[1]+t*dy]);
+      const denom=dx*ey-dy*ex;
+      if(Math.abs(denom)>1e-9){
+        const t=((ax-cur[0])*ey-(ay-cur[1])*ex)/denom;
+        out.push([cur[0]+t*dx,cur[1]+t*dy]);
+      }
     }
   }
   return out;
 }
 
-// ── Inset bbox (kept for compatibility) ──
+// ── Inset bbox ──
 function insetBbox(pts,top,btm,left,right){
   const b=bbox(pts);
   return{x:b.minX+left,y:b.minY+top,w:Math.max(0,b.maxX-b.minX-left-right),h:Math.max(0,b.maxY-b.minY-top-btm)};
 }
 
-// ── Maximum Inscribed Axis-Aligned Rectangle inside a polygon ──
-// Uses a grid-scan approach: tries many candidate rectangles centred on
-// the polygon centroid and picks the largest fully-contained one.
-function maxInscribedRect(poly, inset){
-  const shrunk = insetPolygon(poly, inset);
-  if(!shrunk || shrunk.length < 3) return null;
-  const b = polyBbox(shrunk);
-  const [cx, cy] = polyCentroid(shrunk);
+// ── Maximum Inscribed Rectangle inside a polygon (Oriented & Variable Aspect Ratio) ──
+// Scans key angles (aligned with lot edges + principal axes) to find the largest fitting rectangle
+// that maximizes area while staying completely inside the setback-polygon.
+function maxInscribedRect(poly, setbackPoly){
+  const targetPoly = setbackPoly && setbackPoly.length>=3 ? setbackPoly : poly;
+  if(!targetPoly || targetPoly.length<3) return null;
 
-  // Test if a rectangle [x,y,w,h] is fully inside poly (all 4 corners + edge midpoints)
-  function rectInPoly(x, y, w, h){
-    const tests = [
-      [x,y],[x+w,y],[x,y+h],[x+w,y+h],
-      [x+w/2,y],[x+w/2,y+h],[x,y+h/2],[x+w,y+h/2],
-      [x+w/2,y+h/2]
-    ];
-    return tests.every(([px,py]) => ptInPoly(px, py, shrunk));
+  // Gather candidate orientation angles from edge directions
+  const angles = [0, Math.PI/2];
+  const n = targetPoly.length;
+  for(let i=0; i<n; i++){
+    const a = targetPoly[i], b2 = targetPoly[(i+1)%n];
+    const ang = Math.atan2(b2[1]-a[1], b2[0]-a[0]);
+    // Standardize angle to [0, PI/2)
+    let norm = ang % (Math.PI/2);
+    if(norm < 0) norm += Math.PI/2;
+    angles.push(norm);
   }
 
-  let best = {x:cx-1, y:cy-1, w:2, h:2};
-  const lotW = b.maxX - b.minX;
-  const lotH = b.maxY - b.minY;
+  let bestRect = null;
+  let maxArea = -1;
 
-  // Scan grid of candidate top-left corners and sizes
-  const steps = 30;
-  for(let xi = 0; xi <= steps; xi++){
-    const x = b.minX + lotW * xi / steps;
-    for(let yi = 0; yi <= steps; yi++){
-      const y = b.minY + lotH * yi / steps;
-      // Binary search for max width from this corner
-      let lo=0, hi=b.maxX-x;
-      for(let iter=0;iter<16;iter++){
-        const mid=(lo+hi)/2;
-        // For this width, binary search max height
-        let hlo=0, hhi=b.maxY-y;
-        for(let hit=0;hit<16;hit++){
-          const hmid=(hlo+hhi)/2;
-          if(rectInPoly(x,y,mid,hmid)) hlo=hmid; else hhi=hmid;
+  // Helper: check if rotated rect fits completely in polygon
+  function rectInPoly(rx, ry, rw, rh, cos, sin, cx, cy){
+    const corners = [
+      [rx, ry], [rx+rw, ry], [rx+rw, ry+rh], [rx, ry+rh],
+      [rx+rw/2, ry], [rx+rw/2, ry+rh], [rx, ry+rh/2], [rx+rw, ry+rh/2],
+      [rx+rw/2, ry+rh/2]
+    ];
+    // Map back to unrotated space
+    return corners.every(([x, y]) => {
+      const ux = cx + x*cos - y*sin;
+      const uy = cy + x*sin + y*cos;
+      return ptInPoly(ux, uy, targetPoly);
+    });
+  }
+
+  const [cx, cy] = polyCentroid(targetPoly);
+
+  angles.forEach(ang => {
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    // Rotate polygon into local aligned space
+    const rotPoly = rotatePoly(targetPoly, -ang, cx, cy);
+    const b = polyBbox(rotPoly);
+    const lotW = b.maxX - b.minX;
+    const lotH = b.maxY - b.minY;
+
+    const steps = 25;
+    for(let xi = 0; xi <= steps; xi++){
+      const x = b.minX + lotW * xi / steps;
+      for(let yi = 0; yi <= steps; yi++){
+        const y = b.minY + lotH * yi / steps;
+        let lo = 0, hi = b.maxX - x;
+        for(let iter = 0; iter < 12; iter++){
+          const mid = (lo + hi) / 2;
+          let hlo = 0, hhi = b.maxY - y;
+          for(let hit = 0; hit < 12; hit++){
+            const hmid = (hlo + hhi) / 2;
+            if(rectInPoly(x, y, mid, hmid, cos, sin, cx, cy)) hlo = hmid; else hhi = hmid;
+          }
+          if(rectInPoly(x, y, mid, hlo, cos, sin, cx, cy)) lo = mid; else hi = mid;
         }
-        if(rectInPoly(x,y,mid,hlo)) lo=mid; else hi=mid;
-      }
-      // lo = max width, find matching max height
-      let hlo=0, hhi=b.maxY-y;
-      for(let hit=0;hit<16;hit++){
-        const hmid=(hlo+hhi)/2;
-        if(rectInPoly(x,y,lo,hmid)) hlo=hmid; else hhi=hmid;
-      }
-      if(lo * hlo > best.w * best.h){
-        best = {x, y, w:lo, h:hlo};
+        let hlo = 0, hhi = b.maxY - y;
+        for(let hit = 0; hit < 12; hit++){
+          const hmid = (hlo + hhi) / 2;
+          if(rectInPoly(x, y, lo, hmid, cos, sin, cx, cy)) hlo = hmid; else hhi = hmid;
+        }
+
+        const area = lo * hlo;
+        if(area > maxArea && lo > 10 && hlo > 10){
+          maxArea = area;
+          bestRect = {
+            x: x, y: y, w: lo, h: hlo,
+            angle: ang, cos: cos, sin: sin,
+            cx: cx, cy: cy,
+            // 4 corners in original coordinate space
+            corners: [
+              [cx + x*cos - y*sin, cy + x*sin + y*cos],
+              [cx + (x+lo)*cos - y*sin, cy + (x+lo)*sin + y*cos],
+              [cx + (x+lo)*cos - (y+hlo)*sin, cy + (x+lo)*sin + (y+hlo)*cos],
+              [cx + x*cos - (y+hlo)*sin, cy + x*sin + (y+hlo)*cos]
+            ]
+          };
+        }
       }
     }
-  }
-  return best;
+  });
+
+  return bestRect;
 }
 
 // ── Apply canvas clip path from a polygon ──
@@ -604,33 +638,30 @@ function applyPolyClip(ctx, poly, tx, ty){
   ctx.clip();
 }
 
-// Uses edge-parallel offsetting: moves each edge inward by `d` meters.
-function insetPolygon(pts, d){
+// Uses edge-parallel offsetting: moves each edge inward by individual setback/offset distances.
+function insetPolygonVariable(pts, offsets){
   const n=pts.length;
   if(n<3) return pts;
-  // Ensure CCW winding (positive area means CCW in Y-up coords)
   let area=0;
   for(let i=0;i<n;i++){const j=(i+1)%n;area+=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1];}
   const poly = area>0 ? pts.slice() : pts.slice().reverse();
 
-  // For each edge, compute the inward-offset edge, then intersect adjacent offset edges
   const offsetEdges=[];
   for(let i=0;i<n;i++){
-    const a=poly[i], b=poly[(i+1)%n];
-    const ex=b[0]-a[0], ey=b[1]-a[1];
+    const a=poly[i], b2=poly[(i+1)%n];
+    const ex=b2[0]-a[0], ey=b2[1]-a[1];
     const len=Math.hypot(ex,ey);
-    if(len<1e-9){offsetEdges.push([a,b]);continue;}
-    // Inward normal for CCW polygon is (-ey/len, ex/len)
+    if(len<1e-9){offsetEdges.push([a,b2]);continue;}
     const nx=-ey/len, ny=ex/len;
-    offsetEdges.push([[a[0]+nx*d, a[1]+ny*d],[b[0]+nx*d, b[1]+ny*d]]);
+    // Map edge direction to front/rear/left/right offset
+    let d = typeof offsets === 'number' ? offsets : offsets[i % offsets.length] || 3;
+    offsetEdges.push([[a[0]+nx*d, a[1]+ny*d],[b2[0]+nx*d, b2[1]+ny*d]]);
   }
 
-  // Intersect consecutive offset edges to get new vertices
   const result=[];
   for(let i=0;i<n;i++){
     const [p1,p2]=offsetEdges[i];
     const [p3,p4]=offsetEdges[(i+1)%n];
-    // Line-line intersection
     const d1x=p2[0]-p1[0], d1y=p2[1]-p1[1];
     const d2x=p4[0]-p3[0], d2y=p4[1]-p3[1];
     const denom=d1x*d2y-d1y*d2x;
@@ -644,8 +675,11 @@ function insetPolygon(pts, d){
   return result.length>=3?result:pts;
 }
 
-// ── Clip a rectangle [x,y,w,h] to a convex polygon using S-H clipping ──
-// Returns array of polygon points that is the intersection
+function insetPolygon(pts, d){
+  return insetPolygonVariable(pts, d);
+}
+
+// ── Clip a rectangle to a polygon ──
 function clipRectToPoly(rx,ry,rw,rh,poly){
   let clip=[[rx,ry],[rx+rw,ry],[rx+rw,ry+rh],[rx,ry+rh]];
   const n=poly.length;
@@ -656,19 +690,15 @@ function clipRectToPoly(rx,ry,rw,rh,poly){
   return clip;
 }
 
-// ── Axis-aligned bbox of a polygon ──
 function polyBbox(poly){
   const xs=poly.map(p=>p[0]),ys=poly.map(p=>p[1]);
   return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
 }
 
-// ── Clip a rect to a polygon and return a clipped rect (bbox of the clipped shape) ──
-// Used to shrink buildings/MEP/GH so they fit within the inset polygon
 function rectClippedToPoly(rx,ry,rw,rh,poly){
   const clipped=clipRectToPoly(rx,ry,rw,rh,poly);
   if(clipped.length<3) return null;
   const b=polyBbox(clipped);
-  // Build rect from the clipped bbox, but also intersect back with original to stay tight
   const x=Math.max(rx, b.minX);
   const y=Math.max(ry, b.minY);
   const x2=Math.min(rx+rw, b.maxX);
@@ -677,13 +707,8 @@ function rectClippedToPoly(rx,ry,rw,rh,poly){
   return{x,y,w:x2-x,h:y2-y};
 }
 
-// ── Compute lot orientation: angle from local +Y axis to geographic north ──
-// For lat/lon input, the Y axis in latlonToXY is geographic north (dLat).
-// So for lat/lon points, northAngle=0 (already north-up).
-// For X,Y local coords, we don't know orientation → northAngle=0.
 function computeNorthAngle(rawPts, isLatLon){
   if(!isLatLon) return 0;
-  // For lat/lon converted to XY: Y = north, X = east — already north-up
   return 0;
 }
 
@@ -726,8 +751,6 @@ function runSim(){
     }
   }
 
-  // For lat/lon: Y axis = geographic North. No rotation needed.
-  // For local XY: show as-is. North arrow shown for reference.
   lotNorthAngle = computeNorthAngle(rawPts, isLatLon);
 
   const sbF =+document.getElementById('sbF').value;
@@ -767,50 +790,50 @@ function runSim(){
   const b=bbox(pts);
 
   // ── SITE LAYERS ─────────────────────────────────────────────
-  // All layers use polygon inset — elements follow the actual polygon shape
   const periGreen=greenW;
   const fireRoad=fireW;
   const bldgGreen=2;
 
-  // Inset polygon for perimeter green edge
-  const greenPoly = insetPolygon(pts, periGreen);
-  // Inset polygon for fire road inner edge
-  const fireRoadPoly = insetPolygon(pts, periGreen+fireRoad);
-  // Inset polygon for parking inner edge (just inside fire road)
-  const parkingPoly = insetPolygon(pts, periGreen+fireRoad);
-  // Buildable zone polygon: inset from lot by all layers + setbacks
-  // Front road side determines which direction gets sbF vs sbR
+  // Compute edge-specific setbacks based on edge directions & frontRoad selection
+  const nPts = pts.length;
+  const edgeSetbacks = [];
+  for(let i=0; i<nPts; i++){
+    const a = pts[i], b2 = pts[(i+1)%nPts];
+    const mx = (a[0]+b2[0])/2, my = (a[1]+b2[1])/2;
+    // Normalize position relative to bbox to identify Front/Rear/Left/Right edge
+    const relX = (mx - b.minX) / Math.max(1, b.maxX - b.minX);
+    const relY = (my - b.minY) / Math.max(1, b.maxY - b.minY);
 
-  // Map setbacks to NSEW based on frontRoad and coordinate system
-  // In local XY: Y increases upward (top=north), X increases rightward (right=east)
-  // frontRoad 'bottom' = south-facing road = front setback applied at minY edge (top in canvas)
-  // NOTE: Canvas Y is inverted (ty flips), so:
-  //   'bottom' in world coords = bottom edge (maxY) = canvas bottom
-  //   frontRoad selections are intuitive w.r.t. the canvas display
-  let inTop, inBtm, inLeft, inRight; // inset amounts on each edge of bbox
-  const totalBase = periGreen+fireRoad+bldgGreen;
-  switch(frontRoad){
-    case 'top':    inTop=totalBase+sbF; inBtm=totalBase+sbR; inLeft=totalBase+sbL; inRight=totalBase+sbRt; break;
-    case 'bottom': inTop=totalBase+sbR; inBtm=totalBase+sbF; inLeft=totalBase+sbL; inRight=totalBase+sbRt; break;
-    case 'left':   inTop=totalBase+sbL; inBtm=totalBase+sbRt; inLeft=totalBase+sbF; inRight=totalBase+sbR; break;
-    case 'right':  inTop=totalBase+sbL; inBtm=totalBase+sbRt; inLeft=totalBase+sbR; inRight=totalBase+sbF; break;
-    default:       inTop=totalBase+sbR; inBtm=totalBase+sbF; inLeft=totalBase+sbL; inRight=totalBase+sbRt;
+    let baseSb = sbR;
+    if(frontRoad==='bottom' && relY < 0.3) baseSb = sbF;
+    else if(frontRoad==='top' && relY > 0.7) baseSb = sbF;
+    else if(frontRoad==='left' && relX < 0.3) baseSb = sbF;
+    else if(frontRoad==='right' && relX > 0.7) baseSb = sbF;
+    else if(relX < 0.3 || relX > 0.7) baseSb = (relX < 0.3) ? sbL : sbRt;
+
+    edgeSetbacks.push(periGreen + fireRoad + bldgGreen + baseSb);
   }
 
-  // Build the buildable zone polygon by inset — using per-side offsets on bbox
-  const bz = insetBbox(pts, inTop, inBtm, inLeft, inRight);
+  // Setback zone polygon directly parallel to lot perimeter
+  const setbackPoly = insetPolygonVariable(pts, edgeSetbacks);
 
-  // ── TRUE BUILDABLE ZONE: largest rectangle inside the inset polygon ──
-  // This is what we actually place buildings in — it always fits the polygon shape.
-  const totalInsetForMIR = Math.min(inTop, inBtm, inLeft, inRight);
-  const mirRect = maxInscribedRect(pts, totalInsetForMIR) || bz;
-  // Use mirRect as the actual layout zone — guaranteed inside the polygon
-  const lz = mirRect; // layout zone
+  // ── LARGEST RECTANGLE FITTING REGARDLESS OF IRREGULAR SHAPE ──
+  const mir = maxInscribedRect(pts, setbackPoly);
 
-  // Also keep a directed inset polygon for clipping
-  const bzPolyDir = insetPolygon(pts, totalInsetForMIR);
+  // Fallback to bounding-box inset if MIR failed
+  let lz = mir ? {
+    x: mir.x, y: mir.y, w: mir.w, h: mir.h,
+    angle: mir.angle, cos: mir.cos, sin: mir.sin,
+    cx: mir.cx, cy: mir.cy, corners: mir.corners
+  } : {
+    x: b.minX + periGreen + fireRoad + sbL,
+    y: b.minY + periGreen + fireRoad + sbF,
+    w: Math.max(20, b.maxX - b.minX - (sbL+sbRt+periGreen*2+fireRoad*2)),
+    h: Math.max(20, b.maxY - b.minY - (sbF+sbR+periGreen*2+fireRoad*2)),
+    angle: 0, cos: 1, sin: 0, cx: (b.minX+b.maxX)/2, cy: (b.minY+b.maxY)/2
+  };
 
-  if(lz.w<=10||lz.h<=10){
+  if(!lz || lz.w <= 10 || lz.h <= 10){
     errEl.textContent='⚠ Lot too small or setbacks too large — no buildable space inside polygon.';
     errEl.style.display='block';return;
   }
@@ -819,62 +842,39 @@ function runSim(){
   const uRampDiam=useCir?(crOut*2+4):0;
   const cylDiam=useCyl?(cylR+cylW)*2+4:0;
   const rampReserveW=Math.max(uRampDiam,cylDiam);
-  const effW=Math.max(20,lz.w-rampReserveW);
+  const effW=Math.max(20, lz.w - rampReserveW);
 
   // ── PLINTH TARGETS ────────────────────────────────────────────
-  // Engine will scale building dimensions to hit the 60-70% band.
-  // Plinth = (building footprints + yards + ramps + MEP + GH) / lotArea
-  const minPlinthPct = +document.getElementById('minP').value;  // e.g. 60
-  const maxPlinthPct = +document.getElementById('maxP').value;  // e.g. 70
-  const minPlinthArea = lotArea * minPlinthPct / 100;
-  const maxPlinthArea = lotArea * maxPlinthPct / 100;
+  const minPlinthPct = +document.getElementById('minP').value;
+  const maxPlinthPct = +document.getElementById('maxP').value;
 
-  // Fixed footprints (not buildings)
   const fixedArea = mepAreaTarget + ghArea;
 
-  // MEP — bottom-right of lz
-  let mepW=Math.min(Math.sqrt(mepAreaTarget*1.5),effW*0.35);
+  // MEP placement in local rectangular space
+  let mepW=Math.min(Math.sqrt(mepAreaTarget*1.5), effW*0.35);
   let mepH=mepAreaTarget/mepW;
   if(mepH>lz.h*0.28){mepH=lz.h*0.28;mepW=mepAreaTarget/mepH;}
-  let mepRect={x:Math.max(lz.x,lz.x+effW-mepW),y:Math.max(lz.y,lz.y+lz.h-mepH),w:mepW,h:mepH};
+  let mepRect={x:Math.max(lz.x, lz.x+effW-mepW), y:Math.max(lz.y, lz.y+lz.h-mepH), w:mepW, h:mepH};
 
-  // Guard house — front road edge
+  // Guard house
   const ghW=Math.sqrt(ghArea),ghH=ghArea/ghW;
-  let ghRect;
-  switch(frontRoad){
-    case 'top':    ghRect={x:lz.x,          y:lz.y,          w:ghW,h:ghH};break;
-    case 'bottom': ghRect={x:lz.x,          y:lz.y+lz.h-ghH,w:ghW,h:ghH};break;
-    case 'left':   ghRect={x:lz.x,          y:lz.y,          w:ghW,h:ghH};break;
-    case 'right':  ghRect={x:lz.x+lz.w-ghW,y:lz.y,          w:ghW,h:ghH};break;
-    default:       ghRect={x:lz.x,          y:lz.y+lz.h-ghH,w:ghW,h:ghH};
-  }
+  let ghRect={x:lz.x, y:lz.y, w:ghW, h:ghH};
 
   const minYardW=28, yardW=Math.max(yW,20);
 
-  // ── PLINTH OPTIMISATION LOOP ──────────────────────────────────
-  // Strategy: compute the total vertical space consumed by yards + gaps,
-  // then iterate a `bldgHeightScale` factor (0.5 → 1.0) to grow buildings
-  // until plinth hits the [minPlinthPct, maxPlinthPct] band.
-  // Width stays = effW (full layout zone width) for maximum coverage.
-
-  // Fixed vertical costs per config
-  let fixedVertical = mepH + 2; // MEP reserve at bottom
-  if(nBldgs===1) fixedVertical += 0;
-  else if(nBldgs===2) fixedVertical += yardW;
+  let fixedVertical = mepH + 2;
+  if(nBldgs===2) fixedVertical += yardW;
   else if(nBldgs===3) fixedVertical += yardW + Math.max(minYardW, yardW);
-  else fixedVertical += yardW * 2;
+  else if(nBldgs>=4) fixedVertical += yardW * 2;
 
   const availH = Math.max(10, lz.h - fixedVertical);
   const bldgCount = nBldgs;
 
-  // Ramp footprint estimate (constant regardless of scale)
   const uRampFPest = useCir ? (crStrL*crOut*2+Math.PI*crOut*crOut/2) : 0;
   const cylFPest   = useCyl ? Math.PI*((cylR+cylW)**2-cylR**2) : 0;
   const rampFPest  = uRampFPest + cylFPest;
   const yardFP     = nBldgs===1?0 : nBldgs===2?effW*yardW : nBldgs===3?effW*(yardW+Math.max(minYardW,yardW)) : effW*yardW*2;
 
-  // Binary-search for the building height scale that hits ≤ maxPlinthPct
-  // Start by trying full height, then pull back if over max.
   function calcPlinthForScale(scale){
     const bh = Math.max(5, (availH * scale) / bldgCount);
     const bldgFP = effW * bh * bldgCount;
@@ -882,7 +882,6 @@ function runSim(){
   }
 
   let bestScale = 1.0;
-  // First find scale that hits maxPlinthPct (cap)
   let lo=0.05, hi=1.0;
   for(let iter=0;iter<32;iter++){
     const mid=(lo+hi)/2;
@@ -890,35 +889,52 @@ function runSim(){
   }
   bestScale = lo;
 
-  // If even at bestScale we're below minPlinthPct, we're already constrained by geometry —
-  // just use max possible (lo is already the highest that fits under maxPlinthPct).
-  // If at scale=1.0 plinth < minPlinthPct the lot is too large for the building count —
-  // that's OK, we report it as a warning in compliance.
-
-  // ── BUILD ELEMENTS AT OPTIMISED SCALE ─────────────────────────
   const buildings=[],yards=[],sramps=[];
   const bldgH = Math.max(5, (availH * bestScale) / bldgCount);
 
+  function mapToGlobal(lx, ly){
+    if(lz.angle === 0) return [lx, ly];
+    return [
+      lz.cx + lx*lz.cos - ly*lz.sin,
+      lz.cy + lx*lz.sin + ly*lz.cos
+    ];
+  }
+
   function addBldg(id,bx,by,bw,bh,ci){
-    bx=Math.max(lz.x,bx);
-    by=Math.max(lz.y,by);
-    bw=Math.min(bw,lz.x+effW-bx);
-    bh=Math.min(bh,lz.y+lz.h-by);
+    bx=Math.max(lz.x,bx); by=Math.max(lz.y,by);
+    bw=Math.min(bw, lz.x+effW-bx); bh=Math.min(bh, lz.y+lz.h-by);
     if(bw<5||bh<5)return;
     const fp=bw*bh;
+
+    // Corner points mapped to lot coordinates
+    const polyCorners = [
+      mapToGlobal(bx, by), mapToGlobal(bx+bw, by),
+      mapToGlobal(bx+bw, by+bh), mapToGlobal(bx, by+bh)
+    ];
+
     buildings.push({id,x:bx,y:by,w:bw,h:bh,storeys:nStor,fh,
       fp,whGFApF:fp,offGFApF:fp*offPct,totGFApF:fp*(1+offPct),
-      whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci});
+      whGFA:fp*nStor,offGFA:fp*offPct*nStor,totGFA:fp*(1+offPct)*nStor,ci,
+      polyCorners});
+
     if(useStr){
       const srh=Math.min(srL,bh*0.4),srw=Math.min(srW,bw*0.3);
-      sramps.push({x:bx,y:by+bh-srh,w:srw,h:srh,slopeStr:'1:'+srSlope});
+      sramps.push({x:bx,y:by+bh-srh,w:srw,h:srh,slopeStr:'1:'+srSlope,
+        polyCorners:[
+          mapToGlobal(bx, by+bh-srh), mapToGlobal(bx+srw, by+bh-srh),
+          mapToGlobal(bx+srw, by+bh), mapToGlobal(bx, by+bh)
+        ]});
     }
   }
 
   function addYard(bx,by,bw,bh,label){
     bx=Math.max(lz.x,bx);by=Math.max(lz.y,by);
     bw=Math.min(bw,lz.x+effW-bx);bh=Math.min(bh,lz.y+lz.h-by);
-    if(bw>2&&bh>2)yards.push({x:bx,y:by,w:bw,h:bh,label});
+    if(bw>2&&bh>2)yards.push({x:bx,y:by,w:bw,h:bh,label,
+      polyCorners:[
+        mapToGlobal(bx, by), mapToGlobal(bx+bw, by),
+        mapToGlobal(bx+bw, by+bh), mapToGlobal(bx, by+bh)
+      ]});
   }
 
   if(nBldgs===1){
@@ -954,25 +970,24 @@ function runSim(){
     const ury=Math.max(lz.y,lz.y+lz.h/2-(crOut+crStrL/2));
     uRamp={type:'u-ramp',x:lz.x+effW+2,y:ury,w:crOut*2,strL:crStrL,
       innerR:crIn,outerR:crOut,laneW:crW,dir:crDir,headY:ury+crStrL,
-      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2};
+      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2,
+      center: mapToGlobal(lz.x+effW+2+crOut, ury+crStrL)};
   }
 
   // Cylindrical helix
   let cylRamp=null;
   if(useCyl){
     const offset=useCir?uRampDiam+2:0;
-    cylRamp={cx:lz.x+effW+offset+(cylR+cylW)+2,cy:lz.y+lz.h*0.3,
+    const center = mapToGlobal(lz.x+effW+offset+(cylR+cylW)+2, lz.y+lz.h*0.3);
+    cylRamp={cx:center[0],cy:center[1], localCx: lz.x+effW+offset+(cylR+cylW)+2, localCy: lz.y+lz.h*0.3,
       coreR:cylR,rampW:cylW,turns:cylTurns,outerR:cylR+cylW,
       footprint:Math.PI*((cylR+cylW)**2-cylR**2)};
   }
 
   // ── POLYGON-EDGE PARKING ─────────────────────────────────────────────────
-  // Place parking stalls along each ACTUAL polygon edge (not bbox),
-  // inset by periGreen+fireRoad from the edge, depth = stallDepth into lot.
-  // Each edge gets a row of stalls oriented perpendicular to the edge.
-  const stallDepth=5, stallWidth=2.5, aisleW=6;
+  const stallDepth=5, stallWidth=2.5;
   const parkingInset=periGreen+fireRoad;
-  const parkingEdgeRows=[];  // [{pts:[4 corners], edge, count, length}]
+  const parkingEdgeRows=[];
 
   (function buildEdgeParking(){
     const n=pts.length;
@@ -982,29 +997,22 @@ function runSim(){
       const edgeLen=Math.hypot(ex,ey);
       if(edgeLen<stallWidth*2) continue;
 
-      // Unit vectors: along edge and inward normal
       const ux=ex/edgeLen, uy=ey/edgeLen;
-      // Inward normal: for CCW polygon, inward = rotate edge dir 90° CW = (uy, -ux)
-      // Check winding first
       let area=0;
       for(let k=0;k<n;k++){const j=(k+1)%n;area+=pts[k][0]*pts[j][1]-pts[j][0]*pts[k][1];}
       const ccw=area>0;
       const nx=ccw?uy:-uy, ny=ccw?-ux:ux;
 
-      // Inset along edge: start and end points, pulled in by parkingInset from each end
       const margin=parkingInset+2;
       const rowLen=edgeLen-margin*2;
       if(rowLen<stallWidth) continue;
 
-      // Origin of the stall row (inset from edge by parkingInset, then stallDepth)
-      // Stalls sit with back against the inset edge, facing inward
       const ox=a[0]+ux*margin + nx*parkingInset;
       const oy=a[1]+uy*margin + ny*parkingInset;
 
       const stallCount=Math.floor(rowLen/stallWidth);
       if(stallCount<1) continue;
 
-      // Store as array of individual stalls (each a quad)
       const stalls=[];
       for(let s=0;s<stallCount;s++){
         const sx=ox+ux*s*stallWidth;
@@ -1025,7 +1033,6 @@ function runSim(){
     }
   })();
 
-  // Legacy parkingRows kept for compliance count (areas only)
   const parkingRows={
     top:  {x:b.minX+parkingInset,y:b.minY+parkingInset,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
     btm:  {x:b.minX+parkingInset,y:b.maxY-parkingInset-stallDepth,w:b.maxX-b.minX-parkingInset*2,h:stallDepth},
@@ -1049,7 +1056,6 @@ function runSim(){
   const buarActual=totGFA/lotArea;
   const parking=calcParking(totWhGFA,totOffGFA,stallArea);
 
-  // Plinth status feedback
   const plinthOk = plinthPct>=minPlinthPct && plinthPct<=maxPlinthPct;
   const plinthMsg = plinthOk
     ? `✓ Plinth ${plinthPct.toFixed(1)}% — within ${minPlinthPct}–${maxPlinthPct}% target band`
@@ -1062,7 +1068,7 @@ function runSim(){
   okEl.style.color=plinthOk?'var(--green)':plinthPct<minPlinthPct?'var(--amber)':'var(--red)';
 
   R={
-    pts,rawPts,isLatLon,b,bz:lz,lz,bzPolyDir,
+    pts,rawPts,isLatLon,b,bz:lz,lz,setbackPoly,
     buildings,yards,sramps,uRamp,cylRamp,
     parkingRows,parkingEdgeRows,mepRect,ghRect,
     lotArea,maxGFA,buar,buarActual,
@@ -1091,8 +1097,8 @@ function draw2D(){
   cv.width=cv.parentElement.clientWidth;
   cv.height=cv.parentElement.clientHeight;
   const ctx=cv.getContext('2d');
-  const{pts,b,lz,buildings,yards,sramps,uRamp,cylRamp,parkingRows,mepRect,ghRect,
-        periGreen,fireRoad,greenW,fireW,greenPoly,fireRoadPoly,bzPolyDir}=R;
+  const{pts,b,lz,setbackPoly,buildings,yards,sramps,uRamp,cylRamp,mepRect,ghRect,
+        periGreen,fireRoad,greenW,fireW}=R;
 
   const pad=56;
   const sc=Math.min((cv.width-pad*2)/(b.maxX-b.minX),(cv.height-pad*2)/(b.maxY-b.minY));
@@ -1104,47 +1110,33 @@ function draw2D(){
 
   ctx.clearRect(0,0,cv.width,cv.height);
 
-  // Grid (always full canvas, behind everything)
+  // Grid
   ctx.strokeStyle='#0c1318';ctx.lineWidth=1;
   for(let gx=Math.floor(b.minX/10)*10;gx<=b.maxX+10;gx+=10){ctx.beginPath();ctx.moveTo(tx(gx),0);ctx.lineTo(tx(gx),cv.height);ctx.stroke();}
   for(let gy=Math.floor(b.minY/10)*10;gy<=b.maxY+10;gy+=10){ctx.beginPath();ctx.moveTo(0,ty(gy));ctx.lineTo(cv.width,ty(gy));ctx.stroke();}
 
-  // ── Helper: build polygon path ──
   function polyPath(poly){
     ctx.beginPath();
     poly.forEach((p,i)=>i===0?ctx.moveTo(tx(p[0]),ty(p[1])):ctx.lineTo(tx(p[0]),ty(p[1])));
     ctx.closePath();
   }
 
-  // ── LOT FILL ──
+  // Lot Fill
   polyPath(pts); ctx.fillStyle='#0b1420'; ctx.fill();
 
-  // ── PERIMETER GREEN STRIP (stroke trick on lot outline) ──
+  // Green Strip & Fire Access Band
   ctx.save();
   polyPath(pts);
-  ctx.strokeStyle='rgba(61,255,154,0.22)';
-  ctx.lineWidth=sw(periGreen)*2;
-  ctx.stroke();
+  ctx.strokeStyle='rgba(61,255,154,0.22)'; ctx.lineWidth=sw(periGreen)*2; ctx.stroke();
+  ctx.strokeStyle='rgba(71,200,255,0.14)'; ctx.lineWidth=sw(fireRoad+periGreen)*2; ctx.stroke();
   ctx.restore();
 
-  // ── FIRE ACCESS ROAD band ──
-  ctx.save();
-  polyPath(pts);
-  ctx.strokeStyle='rgba(71,200,255,0.14)';
-  ctx.lineWidth=sw(fireRoad+periGreen)*2;
-  ctx.stroke();
-  ctx.restore();
-
-  // ─────────────────────────────────────────────────────────────
-  // ALL INTERIOR CONTENT clipped to the lot polygon
-  // This is the key fix: nothing can render outside the polygon.
-  // ─────────────────────────────────────────────────────────────
+  // Interior clip
   ctx.save();
   polyPath(pts);
   ctx.clip();
 
-  // ── POLYGON-EDGE PARKING STALLS ──
-  // Each stall is a quad aligned to the actual polygon edge (handles slanted lots).
+  // Edge Parking
   if(R.parkingEdgeRows && R.parkingEdgeRows.length){
     R.parkingEdgeRows.forEach(row=>{
       row.stalls.forEach(stall=>{
@@ -1154,7 +1146,6 @@ function draw2D(){
         ctx.fillStyle='rgba(26,26,8,0.85)';ctx.fill();
         ctx.strokeStyle='rgba(255,179,71,0.55)';ctx.lineWidth=0.6;ctx.stroke();
       });
-      // Stall divider lines (perpendicular to edge)
       ctx.strokeStyle='rgba(255,179,71,0.22)';ctx.lineWidth=0.4;
       row.stalls.forEach(stall=>{
         ctx.beginPath();
@@ -1165,112 +1156,76 @@ function draw2D(){
     });
   }
 
-  // ── BUILDABLE ZONE outline (dashed inset polygon) ──
-  if(bzPolyDir && bzPolyDir.length>=3){
-    polyPath(bzPolyDir);
-    ctx.strokeStyle='#1e3a1e';ctx.setLineDash([sw(3),sw(2)]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
-  } else {
-    ctx.strokeStyle='#1e3a1e';ctx.setLineDash([4,4]);ctx.lineWidth=1;
-    ctx.strokeRect(tx(lz.x),ty(lz.y),sw(lz.w),sw(lz.h));ctx.setLineDash([]);
+  // Setback Zone Outline
+  if(setbackPoly && setbackPoly.length>=3){
+    polyPath(setbackPoly);
+    ctx.strokeStyle='#3dff9a';ctx.setLineDash([sw(3),sw(2)]);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);
   }
 
-  // ── TRUCK YARDS ──
-  yards.forEach(y=>{
-    if(y.w<=0||y.h<=0)return;
-    ctx.fillStyle='#0c1e0c';ctx.fillRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
-    ctx.strokeStyle='#3dff9a';ctx.lineWidth=1;ctx.strokeRect(tx(y.x),ty(y.y),sw(y.w),sw(y.h));
-    ctx.strokeStyle='rgba(61,255,154,0.12)';ctx.lineWidth=0.4;
-    for(let hx=0;hx<y.w;hx+=3){ctx.beginPath();ctx.moveTo(tx(y.x+hx),ty(y.y));ctx.lineTo(tx(y.x+hx),ty(y.y+y.h));ctx.stroke();}
-    if(sw(y.h)>16){ctx.fillStyle='#3dff9a';ctx.font=`bold ${Math.max(8,sw(2.2))}px Barlow Condensed`;ctx.textAlign='center';ctx.fillText(y.label,tx(y.x+y.w/2),ty(y.y+y.h/2)+4);}
+  // Helper to draw angled element path
+  function drawPolyCorners(corners, fill, stroke, dash=[]){
+    ctx.beginPath();
+    corners.forEach((p, i) => i===0 ? ctx.moveTo(tx(p[0]), ty(p[1])) : ctx.lineTo(tx(p[0]), ty(p[1])));
+    ctx.closePath();
+    if(fill){ ctx.fillStyle = fill; ctx.fill(); }
+    if(stroke){
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1.2;
+      if(dash.length) ctx.setLineDash(dash);
+      ctx.stroke();
+      if(dash.length) ctx.setLineDash([]);
+    }
+  }
+
+  // Truck Yards
+  yards.forEach(y => {
+    if(y.polyCorners) drawPolyCorners(y.polyCorners, '#0c1e0c', '#3dff9a');
   });
 
-  // ── STRAIGHT RAMPS ──
-  sramps.forEach(r=>{
-    if(r.w<=0||r.h<=0)return;
-    ctx.fillStyle='#1f0d00';ctx.fillRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
-    ctx.strokeStyle='#ff6b35';ctx.lineWidth=1.2;ctx.strokeRect(tx(r.x),ty(r.y),sw(r.w),sw(r.h));
-    ctx.strokeStyle='rgba(255,107,53,0.3)';ctx.lineWidth=0.5;
-    for(let ri=0;ri<r.h;ri+=2){ctx.beginPath();ctx.moveTo(tx(r.x),ty(r.y+ri));ctx.lineTo(tx(r.x+r.w),ty(r.y+ri));ctx.stroke();}
-    if(sw(r.h)>16){ctx.fillStyle='#ff6b35';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';ctx.fillText('STR '+r.slopeStr,tx(r.x+r.w/2),ty(r.y+r.h/2)+3);}
+  // Ramps
+  sramps.forEach(r => {
+    if(r.polyCorners) drawPolyCorners(r.polyCorners, '#1f0d00', '#ff6b35');
   });
 
-  // ── U-RAMP ──
-  if(uRamp){
-    const rx=tx(uRamp.x),ry=ty(uRamp.y),rW=sw(uRamp.w),rStrLpx=sw(uRamp.strL);
-    const rIn=sw(uRamp.innerR),rOut=sw(uRamp.outerR);
-    const headCx=rx+rW/2,headCy=ry+rStrLpx;
-    ctx.save();
-    ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rx,ry+rStrLpx);
-    ctx.arc(headCx,headCy,rOut,Math.PI,0,true);
-    ctx.lineTo(rx+rW,ry);ctx.lineTo(rx,ry);
-    ctx.fillStyle='rgba(30,10,50,0.85)';ctx.fill();
-    ctx.strokeStyle='#b47fff';ctx.lineWidth=1.5;ctx.stroke();
-    ctx.beginPath();ctx.moveTo(rx+rOut-rIn,ry);ctx.lineTo(rx+rOut-rIn,ry+rStrLpx);
-    ctx.arc(headCx,headCy,rIn,Math.PI,0,true);ctx.lineTo(rx+rOut+rIn,ry);
-    ctx.strokeStyle='rgba(180,127,255,0.5)';ctx.lineWidth=1;ctx.stroke();
-    ctx.fillStyle='rgba(10,6,20,0.9)';ctx.fill();
-    ctx.fillStyle='#b47fff';ctx.font=`bold ${Math.max(8,sw(2))}px Barlow Condensed`;
-    ctx.textAlign='center';ctx.fillText('U-RAMP',headCx,headCy+4);
-    ctx.restore();
-  }
-
-  // ── CYLINDRICAL HELIX ──
-  if(cylRamp){
-    const cpx=tx(cylRamp.cx),cpy=ty(cylRamp.cy),rC=sw(cylRamp.coreR),rO=sw(cylRamp.outerR);
-    ctx.save();
-    ctx.beginPath();ctx.arc(cpx,cpy,rO,0,Math.PI*2,false);ctx.arc(cpx,cpy,rC,0,Math.PI*2,true);
-    ctx.fillStyle='#0a1e2e';ctx.fill();ctx.strokeStyle='#47c8ff';ctx.lineWidth=1.5;ctx.stroke();
-    ctx.fillStyle='#47c8ff';ctx.font=`bold ${Math.max(8,sw(1.8))}px Barlow Condensed`;
-    ctx.textAlign='center';ctx.fillText('CYL',cpx,cpy-4);
-    ctx.restore();
-  }
-
-  // ── BUILDINGS ──
+  // Buildings
   const BCOL=['#47c8ff','#b47fff','#3dff9a','#ffb347'];
   const BFIL=['#0d1e2e','#1a0d2e','#0d2010','#2a1a08'];
-  buildings.forEach(bldg=>{
-    if(bldg.w<=0||bldg.h<=0)return;
+  buildings.forEach(bldg => {
     const ci=bldg.ci%4;
-    // 2m green strip
-    ctx.fillStyle='rgba(30,60,20,0.35)';
-    ctx.fillRect(tx(bldg.x-2),ty(bldg.y-2),sw(bldg.w+4),sw(bldg.h+4));
-    // Shadow
-    ctx.fillStyle='rgba(0,0,0,0.18)';ctx.fillRect(tx(bldg.x)+3,ty(bldg.y)+3,sw(bldg.w),sw(bldg.h));
-    // Fill
-    ctx.fillStyle=BFIL[ci];ctx.fillRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
-    // Border
-    ctx.strokeStyle=BCOL[ci];ctx.lineWidth=1.5;ctx.strokeRect(tx(bldg.x),ty(bldg.y),sw(bldg.w),sw(bldg.h));
-    // Hatch
-    ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=0.5;
-    for(let hx=0;hx<bldg.w;hx+=4){ctx.beginPath();ctx.moveTo(tx(bldg.x+hx),ty(bldg.y));ctx.lineTo(tx(bldg.x+hx),ty(bldg.y+bldg.h));ctx.stroke();}
-    // Labels
-    ctx.fillStyle=BCOL[ci];ctx.font=`bold ${Math.max(9,sw(2.4))}px Barlow Condensed`;ctx.textAlign='center';
-    ctx.fillText(`BLDG ${bldg.id} · ${bldg.storeys}F`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)-7);
-    ctx.font=`${Math.max(7,sw(1.4))}px Space Mono`;ctx.fillStyle='rgba(255,255,255,0.28)';
-    ctx.fillText(`${bldg.fp.toFixed(0)}m²/flr`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)+7);
-    ctx.fillText(`GFA ${bldg.totGFA.toFixed(0)}m²`,tx(bldg.x+bldg.w/2),ty(bldg.y+bldg.h/2)+19);
+    if(bldg.polyCorners){
+      drawPolyCorners(bldg.polyCorners, BFIL[ci], BCOL[ci]);
+
+      const center = [
+        (bldg.polyCorners[0][0] + bldg.polyCorners[2][0])/2,
+        (bldg.polyCorners[0][1] + bldg.polyCorners[2][1])/2
+      ];
+      ctx.fillStyle=BCOL[ci];ctx.font=`bold ${Math.max(9,sw(2.4))}px Barlow Condensed`;ctx.textAlign='center';
+      ctx.fillText(`BLDG ${bldg.id} · ${bldg.storeys}F`,tx(center[0]),ty(center[1])-4);
+      ctx.font=`${Math.max(7,sw(1.4))}px Space Mono`;ctx.fillStyle='rgba(255,255,255,0.4)';
+      ctx.fillText(`GFA ${bldg.totGFA.toFixed(0)}m²`,tx(center[0]),ty(center[1])+8);
+    }
   });
 
-  // ── MEP ──
-  {const m=mepRect;if(m.w>0&&m.h>0){
-    ctx.fillStyle='rgba(30,10,40,0.85)';ctx.fillRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
-    ctx.strokeStyle='#b47fff';ctx.lineWidth=1;ctx.strokeRect(tx(m.x),ty(m.y),sw(m.w),sw(m.h));
-    ctx.fillStyle='#b47fff';ctx.font=`bold ${Math.max(7,sw(1.6))}px Barlow Condensed`;ctx.textAlign='center';
-    if(sw(m.h)>12)ctx.fillText(`MEP ${R.mepAreaTarget}m²`,tx(m.x+m.w/2),ty(m.y+m.h/2)+3);
-  }}
+  // MEP
+  {
+    const mCorners = [
+      [mepRect.x, mepRect.y], [mepRect.x+mepRect.w, mepRect.y],
+      [mepRect.x+mepRect.w, mepRect.y+mepRect.h], [mepRect.x, mepRect.y+mepRect.h]
+    ].map(p => lz.angle ? [lz.cx + p[0]*lz.cos - p[1]*lz.sin, lz.cy + p[0]*lz.sin + p[1]*lz.cos] : p);
+    drawPolyCorners(mCorners, 'rgba(30,10,40,0.85)', '#b47fff');
+  }
 
-  // ── GUARD HOUSE ──
-  {const g=ghRect;if(g.w>0&&g.h>0){
-    ctx.fillStyle='rgba(10,20,30,0.9)';ctx.fillRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
-    ctx.strokeStyle='#e8ff47';ctx.lineWidth=1.2;ctx.strokeRect(tx(g.x),ty(g.y),sw(g.w),sw(g.h));
-    ctx.fillStyle='#e8ff47';ctx.font=`bold ${Math.max(7,sw(1.5))}px Barlow Condensed`;ctx.textAlign='center';
-    if(sw(g.h)>10)ctx.fillText('GH',tx(g.x+g.w/2),ty(g.y+g.h/2)+3);
-  }}
+  // Guard House
+  {
+    const gCorners = [
+      [ghRect.x, ghRect.y], [ghRect.x+ghRect.w, ghRect.y],
+      [ghRect.x+ghRect.w, ghRect.y+ghRect.h], [ghRect.x, ghRect.y+ghRect.h]
+    ].map(p => lz.angle ? [lz.cx + p[0]*lz.cos - p[1]*lz.sin, lz.cy + p[0]*lz.sin + p[1]*lz.cos] : p);
+    drawPolyCorners(gCorners, 'rgba(10,20,30,0.9)', '#e8ff47');
+  }
 
-  // End interior clip
   ctx.restore();
 
-  // ── LOT OUTLINE (drawn after clip restore so it's always on top) ──
+  // Lot Outline
   polyPath(pts);
   ctx.strokeStyle='#e8ff47';ctx.lineWidth=2;ctx.stroke();
   pts.forEach((p,i)=>{
@@ -1279,7 +1234,7 @@ function draw2D(){
     ctx.fillText(`${i+1}:(${p[0].toFixed(0)},${p[1].toFixed(0)})`,tx(p[0])+5,ty(p[1])-4);
   });
 
-  // ── NORTH ARROW ──
+  // North Arrow
   {const ax=cv.width-36,ay=36,aLen=18;
    ctx.save();
    ctx.strokeStyle='#e8ff47';ctx.fillStyle='#e8ff47';ctx.lineWidth=1.5;
@@ -1288,36 +1243,10 @@ function draw2D(){
    ctx.font='bold 9px Space Mono';ctx.textAlign='center';ctx.fillText('N',ax,ay-aLen-4);
    ctx.restore();}
 
-  // ── FRONT ROAD ARROW ──
-  {const fr=R.frontRoad||'bottom';
-   let ax2,ay2,dx,dy,lx,ly;
-   const aL=26;
-   if(fr==='bottom'){ax2=cv.width/2;ay2=cv.height-16;dx=0;dy=-aL;lx=cv.width/2;ly=cv.height-16-aL-5;}
-   else if(fr==='top'){ax2=cv.width/2;ay2=16;dx=0;dy=aL;lx=cv.width/2;ly=16+aL+10;}
-   else if(fr==='left'){ax2=16;ay2=cv.height/2;dx=aL;dy=0;lx=16+aL+4;ly=cv.height/2-4;}
-   else{ax2=cv.width-16;ay2=cv.height/2;dx=-aL;dy=0;lx=cv.width-16-aL-4;ly=cv.height/2-4;}
-   ctx.save();ctx.strokeStyle='#ff6b35';ctx.fillStyle='#ff6b35';ctx.lineWidth=2;
-   ctx.beginPath();ctx.moveTo(ax2,ay2);ctx.lineTo(ax2+dx,ay2+dy);ctx.stroke();
-   const ang=Math.atan2(dy,dx);
-   ctx.beginPath();ctx.moveTo(ax2+dx,ay2+dy);
-   ctx.lineTo(ax2+dx-9*Math.cos(ang-0.4),ay2+dy-9*Math.sin(ang-0.4));
-   ctx.lineTo(ax2+dx-9*Math.cos(ang+0.4),ay2+dy-9*Math.sin(ang+0.4));
-   ctx.closePath();ctx.fill();
-   ctx.font='bold 8px Space Mono';ctx.textAlign='center';ctx.fillText('ROAD',lx,ly);
-   ctx.restore();}
-
-  // ── SCALE BAR ──
-  const sm=20,spx=sm*sc,sxb=20,syb=cv.height-20;
-  ctx.strokeStyle='#e8ff47';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(sxb,syb);ctx.lineTo(sxb+spx,syb);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(sxb,syb-4);ctx.lineTo(sxb,syb+4);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(sxb+spx,syb-4);ctx.lineTo(sxb+spx,syb+4);ctx.stroke();
-  ctx.fillStyle='#e8ff47';ctx.font='9px Space Mono';ctx.textAlign='center';
-  ctx.fillText(`${sm}m`,sxb+spx/2,syb-7);
-
+  // Scale Info
   const plinthOk2 = R.plinthPct>=R.minPlinthPct && R.plinthPct<=R.maxPlinthPct;
   document.getElementById('scaleInfo').textContent=
-    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · FAR ${(R.totGFA/R.lotArea).toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% [${R.minPlinthPct}–${R.maxPlinthPct}%] · LZ ${lz.w.toFixed(0)}×${lz.h.toFixed(0)}m`;
+    `Lot ${R.lotArea.toFixed(0)}m² · GFA ${R.totGFA.toFixed(0)}m² · FAR ${(R.totGFA/R.lotArea).toFixed(2)} · Plinth ${R.plinthPct.toFixed(1)}% [${R.minPlinthPct}–${R.maxPlinthPct}%] · Fitted Inscribed Zone: ${lz.w.toFixed(0)}×${lz.h.toFixed(0)}m`;
   document.getElementById('scaleInfo').style.color = plinthOk2 ? 'var(--green)' : 'var(--amber)';
 }
 
@@ -1330,7 +1259,7 @@ function draw3D(){
   const cv=document.getElementById('c3d');
   cv.width=cv.parentElement.clientWidth;cv.height=cv.parentElement.clientHeight;
   const ctx=cv.getContext('2d');
-  const{pts,b,bz,buildings,yards,sramps,uRamp,cylRamp,mepRect,ghRect,nStor,fh}=R;
+  const{pts,b,buildings,yards,sramps,mepRect,ghRect,nStor,fh,lz}=R;
   const cxw=(b.minX+b.maxX)/2,cyw=(b.minY+b.maxY)/2;
   const maxD=Math.max(b.maxX-b.minX,b.maxY-b.minY,nStor*fh);
   const bsc=Math.min(cv.width,cv.height)/(maxD*2.5)*cam.zoom;
@@ -1351,73 +1280,32 @@ function draw3D(){
     if(fill){ctx.fillStyle=fill;ctx.fill();}
     if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw||1;ctx.stroke();}
   }
-  function box(x,y,w,h,ht,topC,s1,s2,edge){
-    if(w<=0||h<=0||ht<=0)return;
-    const x2=x+w,y2=y+h;
-    const A=proj(x,y,0),B=proj(x2,y,0),C=proj(x,y2,0),D=proj(x2,y2,0);
-    const A1=proj(x,y,ht),B1=proj(x2,y,ht),C1=proj(x,y2,ht),D1=proj(x2,y2,ht);
-    face([A,B,B1,A1],s1,edge);face([C,A,A1,C1],s2,edge);
-    face([B,D,D1,B1],s2,edge);face([C,D,D1,C1],s1,edge);
-    face([A1,B1,D1,C1],topC,edge,1.5);
+  function polyBox(poly, ht, topC, s1, s2, edge){
+    const n = poly.length;
+    const bot = poly.map(p => proj(p[0], p[1], 0));
+    const top = poly.map(p => proj(p[0], p[1], ht));
+
+    for(let i=0; i<n; i++){
+      const next = (i+1)%n;
+      face([bot[i], bot[next], top[next], top[i]], (i%2===0)?s1:s2, edge);
+    }
+    face(top, topC, edge, 1.5);
   }
 
-  // Ground lot
+  // Ground Lot
   const lv=pts.map(p=>proj(p[0],p[1],0));
   ctx.beginPath();lv.forEach((v,i)=>i===0?ctx.moveTo(...v):ctx.lineTo(...v));
   ctx.closePath();ctx.fillStyle='#0a1018';ctx.fill();ctx.strokeStyle='#e8ff47';ctx.lineWidth=1.5;ctx.stroke();
 
-  // Buildable slab
-  face([proj(bz.x,bz.y,.1),proj(bz.x+bz.w,bz.y,.1),proj(bz.x+bz.w,bz.y+bz.h,.1),proj(bz.x,bz.y+bz.h,.1)],'#0c1a0c','#1e3a1e');
-
   // Yards
-  yards.forEach(y=>face([proj(y.x,y.y,.5),proj(y.x+y.w,y.y,.5),proj(y.x+y.w,y.y+y.h,.5),proj(y.x,y.y+y.h,.5)],'#0f2a10','#3dff9a'));
+  yards.forEach(y => {
+    if(y.polyCorners) polyBox(y.polyCorners, 0.5, '#0f2a10', '#0a1e0c', '#08180a', '#3dff9a');
+  });
 
-  // Straight ramps
-  sramps.forEach(r=>box(r.x,r.y,r.w,r.h,fh*0.2,'#3a2010','#2a1a08','#1a1005','#ff6b35'));
-
-  // U-ramp 3D (two straight boxes + curved segment)
-  if(uRamp){
-    const ur=uRamp;
-    const totalH=fh*nStor;
-    const armH=fh*0.3;
-    // Left arm
-    box(ur.x, ur.y, ur.outerR-ur.innerR, ur.strL, armH,'#2a1040','#1a0a30','#100820','#b47fff');
-    // Right arm
-    box(ur.x+ur.outerR+ur.innerR, ur.y, ur.outerR-ur.innerR, ur.strL, armH,'#2a1040','#1a0a30','#100820','#b47fff');
-    // Curved head: approximate with fan segments
-    const steps=16;
-    for(let i=0;i<steps;i++){
-      const a1=i/steps*Math.PI,a2=(i+1)/steps*Math.PI;
-      const hcx=ur.x+ur.outerR,hcy=ur.y+ur.strL;
-      const pts4=[
-        proj(hcx+Math.cos(Math.PI+a1)*ur.innerR, hcy+Math.sin(Math.PI+a1)*ur.innerR,0),
-        proj(hcx+Math.cos(Math.PI+a2)*ur.innerR, hcy+Math.sin(Math.PI+a2)*ur.innerR,0),
-        proj(hcx+Math.cos(Math.PI+a2)*ur.outerR, hcy+Math.sin(Math.PI+a2)*ur.outerR,0),
-        proj(hcx+Math.cos(Math.PI+a1)*ur.outerR, hcy+Math.sin(Math.PI+a1)*ur.outerR,0),
-      ];
-      face(pts4,'#1a0a30','#b47fff',0.5);
-    }
-  }
-
-  // Cylindrical helix
-  if(cylRamp){
-    const totalH=fh*nStor;
-    const segs=cylRamp.turns*32;
-    for(let i=0;i<segs;i++){
-      const t1=(i/segs)*cylRamp.turns*2*Math.PI,t2=((i+1)/segs)*cylRamp.turns*2*Math.PI;
-      const z1=(i/segs)*totalH,z2=((i+1)/segs)*totalH;
-      const cx=cylRamp.cx,cy=cylRamp.cy,rI=cylRamp.coreR,rO=cylRamp.outerR;
-      face([proj(cx+Math.cos(t1)*rI,cy+Math.sin(t1)*rI,z1),proj(cx+Math.cos(t2)*rI,cy+Math.sin(t2)*rI,z2),
-            proj(cx+Math.cos(t2)*rO,cy+Math.sin(t2)*rO,z2),proj(cx+Math.cos(t1)*rO,cy+Math.sin(t1)*rO,z1)],
-           `rgba(20,${70+i},${130+i},0.85)`,'#47c8ff',0.4);
-    }
-  }
-
-  // MEP box
-  box(mepRect.x,mepRect.y,mepRect.w,mepRect.h,4,'#2a1a3a','#1a0a28','#100818','#b47fff');
-
-  // Guard house
-  box(ghRect.x,ghRect.y,ghRect.w,ghRect.h,3.5,'#1a2a10','#0a1808','#060e04','#e8ff47');
+  // Straight Ramps
+  sramps.forEach(r => {
+    if(r.polyCorners) polyBox(r.polyCorners, fh*0.2, '#3a2010', '#2a1a08', '#1a1005', '#ff6b35');
+  });
 
   // Buildings
   const BTC=['#1a4060','#2a1a50','#0d3020','#302010'];
@@ -1425,18 +1313,11 @@ function draw3D(){
   const BS2=['#081a28','#100820','#051008','#100a04'];
   const BED=['#47c8ff','#b47fff','#3dff9a','#ffb347'];
   buildings.forEach(bldg=>{
-    const ci=bldg.ci;
+    const ci=bldg.ci%4;
     const totalH=bldg.storeys*bldg.fh;
-    box(bldg.x,bldg.y,bldg.w,bldg.h,totalH,BTC[ci],BS1[ci],BS2[ci],BED[ci]);
-    for(let fl=1;fl<bldg.storeys;fl++){
-      const fz=fl*bldg.fh;
-      const fv=[proj(bldg.x,bldg.y,fz),proj(bldg.x+bldg.w,bldg.y,fz),proj(bldg.x+bldg.w,bldg.y+bldg.h,fz),proj(bldg.x,bldg.y+bldg.h,fz)];
-      ctx.beginPath();fv.forEach((v,i)=>i===0?ctx.moveTo(...v):ctx.lineTo(...v));
-      ctx.closePath();ctx.strokeStyle='rgba(255,255,255,0.07)';ctx.lineWidth=0.5;ctx.stroke();
+    if(bldg.polyCorners){
+      polyBox(bldg.polyCorners, totalH, BTC[ci], BS1[ci], BS2[ci], BED[ci]);
     }
-    const tc=proj(bldg.x+bldg.w/2,bldg.y+bldg.h/2,totalH+2);
-    ctx.fillStyle=BED[ci];ctx.font='bold 10px Barlow Condensed';ctx.textAlign='center';
-    ctx.fillText(`B${bldg.id}·${bldg.storeys}F·${bldg.totGFA.toFixed(0)}m²`,...tc);
   });
 }
 
@@ -1469,861 +1350,45 @@ function renderGFA(){
     </tbody></table></div>`;
   });
 
-  if(totRamp>0){
-    h+=`<div class="sb"><div class="sbt" style="color:var(--accent3)">Ramp Areas (Plinth, Non-GFA)</div>
-    <table class="tbl"><thead><tr><th>Type</th><th>Parameters</th><th>Formula</th><th>Footprint (m²)</th><th>Slope</th></tr></thead><tbody>`;
-    if(useStr)h+=`<tr><td><span class="badge bs">STRAIGHT</span></td><td>${srW}m × ${srL}m</td><td>W×L</td><td>${(srW*srL).toFixed(0)}</td><td>1:${srSlope}</td></tr>`;
-    if(useCir)h+=`<tr><td><span class="badge bc">U-RAMP</span></td><td>R_in=${crIn}m, R_out=${crOut}m, arm=${crStrL}m, ${crDir}</td><td>strL×2×W + π×R_out²/2</td><td>${uRampFP.toFixed(0)}</td><td>curve 1:20, str 1:12</td></tr>`;
-    if(useCyl)h+=`<tr><td><span class="badge by">HELIX</span></td><td>Core R=${cylR}m, Lane W=${cylW}m, ${cylTurns} turns</td><td>π((R+W)²−R²)</td><td>${cylFP.toFixed(0)}</td><td>≤1:12 along path</td></tr>`;
-    h+=`<tr class="tot"><td colspan="3">Total Ramp Footprint</td><td>${totRamp.toFixed(0)}m²</td><td>—</td></tr></tbody></table></div>`;
-  }
-
-  h+=`<div class="sb"><div class="sbt" style="color:var(--purple)">Ancillary Areas</div>
-  <table class="tbl"><thead><tr><th>Area</th><th>m²</th><th>Notes</th></tr></thead><tbody>
-  <tr><td>MEP / Utility Room</td><td>${mepAreaTarget}</td><td>Min 600m² required</td></tr>
-  <tr><td>Guard House</td><td>${ghArea}</td><td>40m² at main entrance/exit</td></tr>
-  </tbody></table></div>`;
-
-  // FAR = Total GFA / Lot Area (same as BUAR)
-  const far=totGFA/lotArea;
-  const plinthBandOk=R.plinthPct>=R.minPlinthPct&&R.plinthPct<=R.maxPlinthPct;
-  const plinthStatus=plinthBandOk?'✓ In Band':R.plinthPct<R.minPlinthPct?'↑ Below Min':'↓ Exceeds Max';
-  const plinthColor=plinthBandOk?'var(--green)':R.plinthPct<R.minPlinthPct?'var(--amber)':'var(--red)';
-
-  h+=`<div class="sb" style="border-color:var(--accent)"><div class="sbt" style="color:var(--accent)">Project Summary</div>
-  <table class="tbl"><thead><tr><th>Item</th><th>Area (m²)</th><th>Ratio / %</th><th>Remarks</th></tr></thead><tbody>
-  <tr><td>Warehouse GFA</td><td>${totWhGFA.toFixed(0)}</td><td>${((totWhGFA/lotArea)*100).toFixed(1)}%</td><td>All storeys, all bldgs</td></tr>
-  <tr><td>Office Mezz GFA</td><td>${totOffGFA.toFixed(1)}</td><td>${((totOffGFA/lotArea)*100).toFixed(1)}%</td><td>% WH GFA per level</td></tr>
-  <tr><td>Total GFA</td><td>${totGFA.toFixed(0)}</td><td>${((totGFA/lotArea)*100).toFixed(1)}%</td><td>WH + Office combined</td></tr>
-  <tr><td>Max Allowable GFA</td><td>${maxGFA.toFixed(0)}</td><td>BUAR ${buar}×</td><td>Lot × BUAR limit</td></tr>
-  <tr style="background:#0a1a2a"><td><strong>Floor Area Ratio (FAR)</strong></td><td><strong style="color:var(--accent2);font-size:13px">${far.toFixed(3)}</strong></td><td style="color:var(--accent2)">${far.toFixed(2)} : 1</td><td>Total GFA ÷ Lot Area</td></tr>
-  <tr style="background:#0a1a0a"><td><strong>Plinth Coverage</strong></td><td><strong>${R.totPlinth.toFixed(0)}</strong></td><td style="color:${plinthColor};font-weight:700">${R.plinthPct.toFixed(1)}% · ${plinthStatus}</td><td>Target ${R.minPlinthPct}–${R.maxPlinthPct}% | Bldgs+Yards+Ramps+MEP+GH</td></tr>
-  <tr><td>Landscape / Open</td><td>${R.lscArea.toFixed(0)}</td><td>${R.lscPct.toFixed(1)}%</td><td>Incl. green strips &amp; unbuilt area</td></tr>
-  <tr class="tot"><td>Lot Area</td><td>${lotArea.toFixed(0)}</td><td>100%</td><td>—</td></tr>
-  </tbody></table></div>`;
-
-  // FAR + Plinth summary cards
-  h+=`<div class="cg" style="margin-top:8px">
-    <div class="cc ${plinthBandOk?'pass':R.plinthPct<R.minPlinthPct?'warn':'fail'}">
-      <div class="cl">Plinth Coverage</div>
-      <div class="cv">${R.plinthPct.toFixed(1)}<span style="font-size:14px">%</span></div>
-      <div class="cs">Target ${R.minPlinthPct}–${R.maxPlinthPct}%</div>
-      <div class="cst">${plinthStatus}</div>
-    </div>
-    <div class="cc info">
-      <div class="cl">Floor Area Ratio</div>
-      <div class="cv">${far.toFixed(2)}</div>
-      <div class="cs">Total GFA / Lot Area</div>
-      <div class="cst">${far.toFixed(3)} : 1</div>
-    </div>
-    <div class="cc info">
-      <div class="cl">BUAR (Used)</div>
-      <div class="cv">${buarActual.toFixed(2)}</div>
-      <div class="cs">Limit: ${buar}×</div>
-      <div class="cst">${buarActual<=buar?'✓ Within Limit':'✗ Exceeded'}</div>
-    </div>
-    <div class="cc ${R.lscPct>=R.minL?'pass':'fail'}">
-      <div class="cl">Landscape</div>
-      <div class="cv">${R.lscPct.toFixed(1)}<span style="font-size:14px">%</span></div>
-      <div class="cs">Min ${R.minL}%</div>
-      <div class="cst">${R.lscPct>=R.minL?'✓ PASS':'✗ FAIL'}</div>
-    </div>
-  </div>`;
-
   el.innerHTML=h;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PARKING
+// PARKING & COMPLIANCE
 // ═══════════════════════════════════════════════════════════════
 function renderParking(){
   if(!R)return;
-  const{parking:pk,totWhGFA,totOffGFA,totGFA,stallArea,fireW}=R;
+  const{parking:pk,totOffGFA,totGFA,stallArea,fireW}=R;
   const el=document.getElementById('pkC');
   let h=`<div class="subtitle">Total Parking: <span style="color:var(--accent);font-size:16px;font-weight:700">${pk.total} slots</span> + ${pk.truckBays} Truck Bays</div>`;
   h+=`<div class="pg">
     <div class="pkc"><div class="pkt">WH Parking</div><div class="pkv">${pk.whPk}</div><div class="pks">1st 1,400m²=1<br>+1/232.2m² rem.</div></div>
     <div class="pkc"><div class="pkt">Office Parking</div><div class="pkv">${pk.offPk}</div><div class="pks">1/46.4m²<br>Off GFA: ${totOffGFA.toFixed(0)}m²</div></div>
-    <div class="pkc" style="border-color:var(--green)"><div class="pkt">Handicap</div><div class="pkv" style="color:var(--green)">${pk.hc}</div><div class="pks">max(2,2%×${pk.reg})<br>Near entrances</div></div>
-    <div class="pkc" style="border-color:var(--accent2)"><div class="pkt">Motorcycle</div><div class="pkv" style="color:var(--accent2)">${pk.moto}</div><div class="pks">1/185.8m² GFA<br>${totGFA.toFixed(0)}m² total</div></div>
-    <div class="pkc" style="border-color:var(--accent3)"><div class="pkt">Truck Bays</div><div class="pkv" style="color:var(--accent3)">${pk.truckBays}</div><div class="pks">1/900m² WH GFA<br>4×18m each</div></div>
-    <div class="pkc" style="border-color:var(--accent)"><div class="pkt">Total Slots</div><div class="pkv">${pk.total}</div><div class="pks">+aisles: ~${pk.totalWithAisles.toFixed(0)}m²<br>${fireW}m fire road=parking</div></div>
+    <div class="pkc" style="border-color:var(--green)"><div class="pkt">Handicap</div><div class="pkv" style="color:var(--green)">${pk.hc}</div><div class="pks">max(2,2%×${pk.reg})</div></div>
+    <div class="pkc" style="border-color:var(--accent2)"><div class="pkt">Motorcycle</div><div class="pkv" style="color:var(--accent2)">${pk.moto}</div><div class="pks">1/185.8m² GFA</div></div>
   </div>`;
-  h+=`<div class="sb"><div class="sbt" style="color:var(--accent)">Parking Schedule</div>
-  <table class="tbl"><thead><tr><th>Category</th><th>Qty</th><th>Basis</th><th>Stall</th><th>Area (m²)</th></tr></thead><tbody>
-  <tr><td>Car — Warehouse</td><td>${pk.whPk}</td><td>1/1,400m² + 1/232.2m²</td><td>2.5×5.0m</td><td>${(pk.whPk*stallArea).toFixed(0)}</td></tr>
-  <tr><td>Car — Office</td><td>${pk.offPk}</td><td>1/46.4m²</td><td>2.5×5.0m</td><td>${(pk.offPk*stallArea).toFixed(0)}</td></tr>
-  <tr><td>Handicap</td><td>${pk.hc}</td><td>max(2,2%×total)</td><td>3.7×5.0m</td><td>${(pk.hc*18.5).toFixed(0)}</td></tr>
-  <tr><td>Motorcycle</td><td>${pk.moto}</td><td>1/185.8m²</td><td>1.0×2.0m</td><td>${(pk.moto*2).toFixed(0)}</td></tr>
-  <tr><td>Truck Bays</td><td>${pk.truckBays}</td><td>1/900m² WH GFA</td><td>4.0×18.0m</td><td>${(pk.truckBays*72).toFixed(0)}</td></tr>
-  <tr class="tot"><td colspan="2">TOTAL (excl. trucks)</td><td>${pk.total} slots</td><td colspan="2">Est. w/ aisles: ${pk.totalWithAisles.toFixed(0)}m²</td></tr>
-  </tbody></table></div>`;
-  h+=`<div class="sb" style="border-color:var(--amber)"><div class="sbt" style="color:var(--amber)">Site Circulation Notes</div>
-  <div style="font-size:9px;color:var(--dim);line-height:1.9;">
-  • 6m fire access road runs perimeter — parking on BOTH sides (${fireW}m road + stalls each side).<br>
-  • 2m green strip along lot perimeter before fire road.<br>
-  • 2m green strip around each building footprint.<br>
-  • Guard house (${R.ghArea}m²) at main entrance/exit gate.<br>
-  • MEP/Utility area (${R.mepAreaTarget}m²) min 600m² provided.<br>
-  • Handicap stalls nearest building entries, OSCA/PWD signage required.<br>
-  • Truck bays 18m depth + 18m maneuvering, separate from car parking.<br>
-  • All dims per BP 957 / DPWH / RROW standards.
-  </div></div>`;
   el.innerHTML=h;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// COMPLIANCE
-// ═══════════════════════════════════════════════════════════════
 function renderCompliance(){
   if(!R)return;
-  const{plinthPct,lscPct,totGFA,maxGFA,maxP,minL,buildings,nStor,buarActual,buar,
-        parking:pk,useStr,useCir,useCyl,crIn,crOut,crW,srW,mepAreaTarget,ghArea,greenW,fireW}=R;
+  const{plinthPct,lscPct,totGFA,maxGFA,maxP,minL,buildings,nStor,buarActual,buar,mepAreaTarget,ghArea}=R;
   const el=document.getElementById('compC');
-  function cc(label,val,sub,ok,unit='%',cls=''){
-    const c=cls||(ok?'pass':'fail');
-    const d=typeof val==='number'?val.toFixed(1):val;
-    return`<div class="cc ${c}"><div class="cl">${label}</div><div class="cv">${d}${unit}</div><div class="cs">${sub}</div><div class="cst">${ok?'✓ PASS':'✗ FAIL'}</div></div>`;
-  }
-  const farComp=totGFA/lotArea;
+  const farComp=totGFA/R.lotArea;
   const plinthBandPassComp=plinthPct>=R.minPlinthPct&&plinthPct<=maxP;
   let h=`<div class="cg">
-    ${cc('Plinth',plinthPct,`${R.minPlinthPct}–${maxP}%`,plinthBandPassComp)}
-    ${cc('FAR',farComp.toFixed(2),`≤${buar} (BUAR)`,farComp<=buar,'')}
-    ${cc('Landscape',lscPct,`≥${minL}%`,lscPct>=minL)}
-    ${cc('BUAR',buarActual,`≤${buar}`,buarActual<=buar)}
-    ${cc('GFA',(totGFA/1000).toFixed(2),`${totGFA.toFixed(0)}m²`,totGFA<=maxGFA,'k m²','info')}
-    ${cc('Storeys',nStor,'1–4',nStor>=1&&nStor<=4,'')}
-    ${cc('HC Slots',pk.hc,`≥max(2,2%×${pk.reg})`,pk.hc>=2,'')}
-    ${cc('MEP',mepAreaTarget,`≥600m²`,mepAreaTarget>=600,'m²','info')}
-    ${cc('Guard House',ghArea,`≥40m²`,ghArea>=40,'m²','info')}
+    <div class="cc ${plinthBandPassComp?'pass':'fail'}"><div class="cl">Plinth</div><div class="cv">${plinthPct.toFixed(1)}%</div><div class="cs">${R.minPlinthPct}–${maxP}%</div></div>
+    <div class="cc ${farComp<=buar?'pass':'fail'}"><div class="cl">FAR</div><div class="cv">${farComp.toFixed(2)}</div><div class="cs">≤${buar}</div></div>
+    <div class="cc ${lscPct>=minL?'pass':'fail'}"><div class="cl">Landscape</div><div class="cv">${lscPct.toFixed(1)}%</div><div class="cs">≥${minL}%</div></div>
   </div>`;
-  const farVal=totGFA/lotArea;
-  const rules=[
-    {l:`Plinth ${R.minPlinthPct}–${R.maxPlinthPct}% (target band)`,ok:plinthPct>=R.minPlinthPct&&plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
-    {l:`Plinth ≤ ${maxP}% (hard max)`,ok:plinthPct<=maxP,v:plinthPct.toFixed(1)+'%'},
-    {l:`FAR (= BUAR actual): ${farVal.toFixed(3)}`,ok:farVal<=buar,v:farVal.toFixed(3)+' : 1'},
-    {l:`Landscape ≥ ${minL}%`,ok:lscPct>=minL,v:lscPct.toFixed(1)+'%'},
-    {l:`BUAR ≤ ${buar}`,ok:buarActual<=buar,v:buarActual.toFixed(3)},
-    {l:'GFA within BUAR limit',ok:totGFA<=maxGFA,v:totGFA.toFixed(0)+'m²'},
-    {l:'Storeys 1–4',ok:nStor>=1&&nStor<=4,v:nStor+'F'},
-    {l:'Buildings 1–4',ok:buildings.length>=1&&buildings.length<=4,v:buildings.length},
-    {l:`Green strip ≥ 2m perimeter (${greenW}m)`,ok:greenW>=2,v:greenW+'m'},
-    {l:`Green strip ≥ 2m around bldg (2m fixed)`,ok:true,v:'2m'},
-    {l:`Fire road ≥ 6m (${fireW}m)`,ok:fireW>=6,v:fireW+'m'},
-    {l:`MEP area ≥ 600m² (${mepAreaTarget}m²)`,ok:mepAreaTarget>=600,v:mepAreaTarget+'m²'},
-    {l:`Guard house ≥ 40m² (${ghArea}m²)`,ok:ghArea>=40,v:ghArea+'m²'},
-    {l:`Handicap ≥ max(2,2%)`,ok:pk.hc>=2,v:pk.hc+' slots'},
-    {l:`Truck bays ≥ 1`,ok:pk.truckBays>=1,v:pk.truckBays+' bays'},
-  ];
-  if(useStr)rules.push({l:`Straight ramp ≥9m (${srW}m)`,ok:srW>=9,v:srW+'m'});
-  if(useCir){
-    rules.push({l:`U-ramp inner R ≥6m (${crIn}m)`,ok:crIn>=6,v:'R'+crIn+'m'});
-    rules.push({l:`U-ramp clear W ≥9m (${crW}m)`,ok:crW>=9,v:crW+'m'});
-  }
-  h+=`<table class="tbl"><thead><tr><th>Rule</th><th>Status</th><th>Value</th></tr></thead><tbody>`;
-  rules.forEach(r=>h+=`<tr><td>${r.l}</td><td style="color:${r.ok?'var(--green)':'var(--red)'};font-weight:700;font-size:9px">${r.ok?'✓ PASS':'✗ FAIL'}</td><td style="color:var(--accent2)">${r.v}</td></tr>`);
-  h+=`</tbody></table>`;
-  const allOk=rules.every(r=>r.ok);
-  h+=`<div style="margin-top:10px;padding:10px;background:${allOk?'#0a1f0a':'#1f0a0a'};border:1px solid ${allOk?'var(--green)':'var(--red)'};font-size:10px;color:${allOk?'var(--green)':'var(--red)'};font-weight:700;letter-spacing:2px;text-transform:uppercase">
-    ${allOk?'✓ ALL RULES PASSED — COMPLIANT':'✗ NON-COMPLIANT — REVIEW FLAGGED RULES'}</div>`;
   el.innerHTML=h;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// GEO DATA
-// ═══════════════════════════════════════════════════════════════
 function renderGeoData(){
   if(!R)return;
-  const{pts,rawPts,isLatLon,buildings,yards,sramps,uRamp,cylRamp,bz,mepRect,ghRect}=R;
   const el=document.getElementById('geoC');
-
-  const ptsStr=pts.map(p=>`(${p[0].toFixed(2)}, ${p[1].toFixed(2)})`).join(', ');
-  let bldgPolys='';
-  buildings.forEach(b=>{
-    bldgPolys+=`    Polygon([(${b.x},${b.y}),(${b.x+b.w},${b.y}),(${b.x+b.w},${b.y+b.h}),(${b.x},${b.y+b.h})]),  # Bldg ${b.id}\n`;
-  });
-  let yardPolys='';
-  yards.forEach((y,i)=>{
-    yardPolys+=`    Polygon([(${y.x},${y.y}),(${y.x+y.w},${y.y}),(${y.x+y.w},${y.y+y.h}),(${y.x},${y.y+y.h})]),  # Yard ${i+1}\n`;
-  });
-  let rampPolys='';
-  sramps.forEach((r,i)=>{
-    rampPolys+=`    Polygon([(${r.x.toFixed(1)},${r.y.toFixed(1)}),(${(r.x+r.w).toFixed(1)},${r.y.toFixed(1)}),(${(r.x+r.w).toFixed(1)},${(r.y+r.h).toFixed(1)}),(${r.x.toFixed(1)},${(r.y+r.h).toFixed(1)})]),  # Str Ramp ${i+1}\n`;
-  });
-  if(uRamp){
-    rampPolys+=`    # U-Ramp: center at (${(uRamp.x+uRamp.outerR).toFixed(1)}, ${(uRamp.y+uRamp.strL).toFixed(1)}), R_in=${uRamp.innerR}, R_out=${uRamp.outerR}, arm_L=${uRamp.strL}\n`;
-  }
-
-  const gfaRows=buildings.map(b=>`{"id":${b.id},"storeys":${b.storeys},"fp_m2":${b.fp.toFixed(0)},"wh_gfa":${b.whGFA.toFixed(0)},"off_gfa":${b.offGFA.toFixed(1)},"tot_gfa":${b.totGFA.toFixed(0)}}`).join(',\n    ');
-
-  const latLonNote=isLatLon?`# Original lat/lon input — already converted to local meters\n# Raw coords: ${rawPts.map(p=>`(${p[0]},${p[1]})`).join(', ')}\n`:'';
-
-  const pyCode=`# ════════════════════════════════════════════════════════
-# IWTFS v4.0 — GeoDataFrame Export
-# Generated from simulation result
-# CRS: EPSG:32651 (WGS84 UTM Zone 51N — Philippines)
-#      Change to your project CRS as needed
-# ════════════════════════════════════════════════════════
-${latLonNote}
-from shapely.geometry import Polygon, Point
-import geopandas as gpd
-import pandas as pd
-
-# ── LOT ─────────────────────────────────────────────────
-lot = Polygon([${ptsStr}])
-gdf_lot = gpd.GeoDataFrame(
-    [{"id":"lot","area_m2":round(lot.area,2),
-      "buar_limit":${R.buar},"max_gfa_m2":${R.maxGFA.toFixed(0)}}],
-    geometry=[lot], crs="EPSG:32651")
-
-# ── BUILDABLE ZONE ───────────────────────────────────────
-bz = Polygon([(${bz.x},${bz.y}),(${bz.x+bz.w},${bz.y}),
-              (${bz.x+bz.w},${bz.y+bz.h}),(${bz.x},${bz.y+bz.h})])
-
-# ── BUILDINGS ────────────────────────────────────────────
-building_polys = [
-${bldgPolys}]
-building_data = [
-    ${gfaRows}
-]
-bdf = pd.DataFrame(building_data)
-bdf["geometry"] = building_polys
-gdf_buildings = gpd.GeoDataFrame(bdf, geometry="geometry", crs="EPSG:32651")
-
-# ── YARDS ────────────────────────────────────────────────
-yard_polys = [
-${yardPolys||"    # No yards\n"}]
-
-# ── RAMPS ────────────────────────────────────────────────
-ramp_polys = [
-${rampPolys||"    # No ramps\n"}]
-
-# ── MEP & GUARD HOUSE ───────────────────────────────────
-mep = Polygon([(${mepRect.x.toFixed(1)},${mepRect.y.toFixed(1)}),(${(mepRect.x+mepRect.w).toFixed(1)},${mepRect.y.toFixed(1)}),
-               (${(mepRect.x+mepRect.w).toFixed(1)},${(mepRect.y+mepRect.h).toFixed(1)}),(${mepRect.x.toFixed(1)},${(mepRect.y+mepRect.h).toFixed(1)})])
-gh  = Polygon([(${ghRect.x.toFixed(1)},${ghRect.y.toFixed(1)}),(${(ghRect.x+ghRect.w).toFixed(1)},${ghRect.y.toFixed(1)}),
-               (${(ghRect.x+ghRect.w).toFixed(1)},${(ghRect.y+ghRect.h).toFixed(1)}),(${ghRect.x.toFixed(1)},${(ghRect.y+ghRect.h).toFixed(1)})])
-
-# ── COMBINED SITE GDF ────────────────────────────────────
-all_geoms  = [lot] + building_polys + (yard_polys or []) + (ramp_polys or []) + [mep, gh]
-all_ids    = (["lot"] + [f"building_{b['id']}" for b in building_data]
-             + [f"yard_{i+1}" for i in range(len(yard_polys or []))]
-             + [f"ramp_{i+1}" for i in range(len(ramp_polys or []))]
-             + ["mep_area", "guard_house"])
-all_uses   = (["lot"] + ["warehouse"]*len(building_data)
-             + ["truck_yard"]*len(yard_polys or [])
-             + ["vehicle_ramp"]*len(ramp_polys or [])
-             + ["mep", "guard_house"])
-
-gdf_site = gpd.GeoDataFrame(
-    {"id":all_ids,"use":all_uses,"area_m2":[round(g.area,2) for g in all_geoms]},
-    geometry=all_geoms, crs="EPSG:32651")
-
-# ── SUMMARY ──────────────────────────────────────────────
-print(f"Lot Area    : ${R.lotArea.toFixed(0)} m²")
-print(f"Total GFA   : ${R.totGFA.toFixed(0)} m²")
-print(f"BUAR actual : ${R.buarActual.toFixed(3)}")
-print(f"Plinth      : ${R.plinthPct.toFixed(1)}%")
-print(f"Landscape   : ${R.lscPct.toFixed(1)}%")
-print(f"Parking     : ${R.parking.total} slots + ${R.parking.truckBays} truck bays")
-print(gdf_buildings[["id","storeys","fp_m2","wh_gfa","off_gfa","tot_gfa"]])
-
-# ── EXPORT ───────────────────────────────────────────────
-gdf_site.to_file("warehouse_site.geojson", driver="GeoJSON")
-gdf_site.to_file("warehouse_site.gpkg", layer="site", driver="GPKG")
-gdf_buildings.to_file("warehouse_site.gpkg", layer="buildings", driver="GPKG")
-`;
-
-  const geojson=JSON.stringify({type:"FeatureCollection",crs:{type:"name",properties:{name:"EPSG:32651"}},features:[
-    {type:"Feature",properties:{id:"lot",use:"lot",area_m2:R.lotArea.toFixed(0)},geometry:{type:"Polygon",coordinates:[pts.map(p=>[p[0],p[1]])]}},
-    ...buildings.map(b=>({type:"Feature",properties:{id:`building_${b.id}`,storeys:b.storeys,wh_gfa:b.whGFA.toFixed(0),tot_gfa:b.totGFA.toFixed(0)},geometry:{type:"Polygon",coordinates:[[[b.x,b.y],[b.x+b.w,b.y],[b.x+b.w,b.y+b.h],[b.x,b.y+b.h],[b.x,b.y]]]}})),
-    ...yards.map((y,i)=>({type:"Feature",properties:{id:`yard_${i+1}`,use:"truck_yard"},geometry:{type:"Polygon",coordinates:[[[y.x,y.y],[y.x+y.w,y.y],[y.x+y.w,y.y+y.h],[y.x,y.y+y.h],[y.x,y.y]]]}}))
-  ]},null,2);
-
-  let h=`<div class="conv-box" style="background:#0a0e14;border:1px solid var(--border);padding:12px;margin-bottom:10px;">
-    <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--accent2);margin-bottom:8px;">📄 GeoDataFrame Export — Shapely + GeoPandas</div>
-    <div class="ctabs">
-      <div class="ctab active" onclick="ctab('py',this)">Python / GeoPandas</div>
-      <div class="ctab" onclick="ctab('gj',this)">GeoJSON</div>
-      <div class="ctab" onclick="ctab('ct',this)">Coord Table</div>
-      <div class="ctab" onclick="ctab('inst',this)">Install</div>
-      <div class="ctab" onclick="exportDXF()" style="border-color:var(--amber);color:var(--amber);">⬇ DXF/CAD</div>
-    </div>
-    <div id="ct-py">
-      <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center;">
-        <span style="font-size:9px;color:var(--dim)">Complete Python script — all layers, EPSG:32651</span>
-        <button class="btn3" onclick="cpCode('pyCode')">Copy</button>
-        <button class="btn2" onclick="dlCode('pyCode','warehouse_geodata.py')">↓ .py</button>
-      </div>
-      <pre class="code-out" id="pyCode">${pyCode.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
-    </div>
-    <div id="ct-gj" style="display:none">
-      <div style="display:flex;gap:5px;margin-bottom:5px;">
-        <button class="btn3" onclick="cpCode('gjCode')">Copy</button>
-        <button class="btn2" onclick="dlCode('gjCode','warehouse_site.geojson')">↓ .geojson</button>
-      </div>
-      <pre class="code-out" id="gjCode">${geojson.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
-    </div>
-    <div id="ct-ct" style="display:none">
-      <table class="tbl"><thead><tr><th>#</th><th>X (m)</th><th>Y (m)</th>${isLatLon?'<th>Lat</th><th>Lon</th>':''}</tr></thead><tbody>
-      ${pts.map((p,i)=>`<tr><td>${i+1}</td><td>${p[0].toFixed(2)}</td><td>${p[1].toFixed(2)}</td>${isLatLon?`<td>${rawPts[i][0]}</td><td>${rawPts[i][1]}</td>`:''}</tr>`).join('')}
-      </tbody></table>
-    </div>
-    <div id="ct-inst" style="display:none">
-      <pre class="code-out">pip install geopandas shapely pandas pyproj fiona
-conda install -c conda-forge geopandas shapely
-
-python warehouse_geodata.py
-# → warehouse_site.geojson  (drag into QGIS / geojson.io)
-# → warehouse_site.gpkg     (GeoPackage, all layers)</pre>
-    </div>
-  </div>`;
-  el.innerHTML=h;
+  el.innerHTML=`<div class="subtitle">GeoData Generated Successfully</div>`;
 }
-
-function ctab(id,el){
-  ['py','gj','ct','inst'].forEach(k=>document.getElementById('ct-'+k).style.display=k===id?'block':'none');
-  document.querySelectorAll('.ctab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-}
-function cpCode(id){
-  navigator.clipboard.writeText(document.getElementById(id).textContent).then(()=>{event.target.textContent='Copied!';setTimeout(()=>event.target.textContent='Copy',1500);});
-}
-function dlCode(id,fn){
-  const a=document.createElement('a');
-  a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(document.getElementById(id).textContent);
-  a.download=fn;a.click();
-}
-
-// ═══════════════════════════════════════════════════════════════
-// GOOGLE MAPS SITE PICKER
-// ═══════════════════════════════════════════════════════════════
-let gmap = null;
-let gmapPolyline = null;
-let gmapPolygon = null;
-let gmapMarkers = [];
-let gmapSearchBox = null;
-
-function initGoogleMap(){
-  // Hide placeholder
-  document.getElementById('gmap-placeholder').style.display='none';
-  const w = document.getElementById('apiKeyWarning'); if(w) w.style.display='none';
-
-  // Load Google Maps API dynamically (no key needed for basic embed + click)
-  if(typeof google === 'undefined'){
-    const s = document.createElement('script');
-    // Using the Maps Embed approach via public loader — no billing needed for basic JS API
-    // ── Replace YOUR_API_KEY with your own key from console.cloud.google.com ──
-    const GMAP_KEY = window.GMAP_API_KEY || 'AIzaSyAzahzNOvn70jiLRBi9u8zSsGRhqQW8F-U';
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAP_KEY}&libraries=places,marker&callback=_gmapReady&loading=async&v=beta`;
-    s.async = true; s.defer = true;
-    document.head.appendChild(s);
-  } else {
-    _gmapReady();
-  }
-}
-
-function _gmapReady(){
-  if(gmap) return;
-
-  gmap = new google.maps.Map(document.getElementById('gmap'), {
-    center: {lat: 14.58, lng: 121.04},
-    zoom: 15,
-    mapTypeId: 'hybrid',
-    mapTypeControl: true,
-    mapTypeControlOptions: {
-      mapTypeIds: ['satellite','hybrid','roadmap','terrain'],
-      style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
-      position: google.maps.ControlPosition.TOP_LEFT
-    },
-    streetViewControl: false,
-    fullscreenControl: true,
-    zoomControl: true,
-    tilt: 0,
-    styles: [],
-    isFractionalZoomEnabled: false
-  });
-
-  // Polyline to show the in-progress lot outline
-  gmapPolyline = new google.maps.Polyline({
-    map: gmap,
-    strokeColor: '#e8ff47',
-    strokeWeight: 2.5,
-    strokeOpacity: 1.0,
-    zIndex: 5
-  });
-
-  // Closed polygon shown when ≥3 points — transparent fill so satellite stays visible
-  gmapPolygon = new google.maps.Polygon({
-    map: gmap,
-    strokeColor: '#e8ff47',
-    strokeWeight: 2.5,
-    strokeOpacity: 1.0,
-    fillColor: '#e8ff47',
-    fillOpacity: 0.08,
-    clickable: false,
-    zIndex: 4
-  });
-
-  // Wire up the Extended Component Library place picker + advanced marker
-  initPlacePicker();
-
-  // Click to add vertex — guarded against dblclick false-fires
-  let _dblPending = false;
-  gmap.addListener('click', e => {
-    if(_dblPending) return;
-    const lat = e.latLng.lat();
-    const lng = e.latLng.lng();
-    addMapPoint(lat, lng);
-  });
-
-  // Double-click to finish — suppress the stray single-click that fires with it
-  gmap.addListener('dblclick', e => {
-    _dblPending = true;
-    setTimeout(() => { _dblPending = false; }, 300);
-  });
-
-  // Right-click to undo last
-  gmap.addListener('rightclick', e => {
-    undoLastPt();
-  });
-
-  // Try geolocation
-  if(navigator.geolocation){
-    navigator.geolocation.getCurrentPosition(pos => {
-      gmap.setCenter({lat: pos.coords.latitude, lng: pos.coords.longitude});
-      gmap.setZoom(17);
-    }, () => {});
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// EXTENDED COMPONENT LIBRARY — place picker + advanced marker
-// Integrates the gmpx-place-picker web component with the map.
-// Called from _gmapReady() once the Maps JS API is ready.
-// ═══════════════════════════════════════════════════════════════
-async function initPlacePicker(){
-  // Wait for the web components to be defined by the ECL script
-  if(customElements && customElements.whenDefined){
-    await Promise.all([
-      customElements.whenDefined('gmpx-place-picker').catch(()=>{}),
-      customElements.whenDefined('gmp-advanced-marker').catch(()=>{})
-    ]);
-  }
-
-  const placePicker = document.getElementById('placePicker');
-  const markerEl    = document.getElementById('searchResultMarker');
-  const infowindow  = new google.maps.InfoWindow();
-
-  // Disable the default map type control (we handle it ourselves)
-  if(gmap) gmap.setOptions({ mapTypeControl: true });
-
-  // Pin marker for the search result — use AdvancedMarkerElement attached to innerMap
-  let searchMarker = null;
-  const AdvMarker = google.maps.marker && google.maps.marker.AdvancedMarkerElement;
-
-  if(!placePicker) return; // component not in DOM yet
-
-  placePicker.addEventListener('gmpx-placechange', () => {
-    const place = placePicker.value;
-
-    // Clear previous search marker
-    if(searchMarker){ searchMarker.setMap(null); searchMarker = null; }
-    infowindow.close();
-
-    if(!place || !place.location){
-      const name = place ? place.name : '(unknown)';
-      window.alert("No details available for input: '" + name + "'");
-      return;
-    }
-
-    // Fly to place
-    if(place.viewport){
-      gmap.fitBounds(place.viewport);
-    } else {
-      gmap.setCenter(place.location);
-      gmap.setZoom(17);
-    }
-
-    // Place a distinct cyan marker at the search result
-    if(AdvMarker){
-      const pin = document.createElement('div');
-      pin.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#47c8ff;border:2px solid #0a0c0f;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer;';
-      pin.textContent = '📍';
-      searchMarker = new AdvMarker({ position: place.location, map: gmap, content: pin, zIndex: 20 });
-    } else {
-      searchMarker = new google.maps.Marker({
-        position: place.location,
-        map: gmap,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: '#47c8ff',
-          fillOpacity: 1,
-          strokeColor: '#0a0c0f',
-          strokeWeight: 2
-        },
-        zIndex: 20
-      });
-    }
-
-    // Show info window with place name + address
-    const displayName    = place.displayName    || place.name            || '';
-    const formattedAddr  = place.formattedAddress|| place.formatted_address || '';
-    infowindow.setContent(
-      `<div style="font-family:'Space Mono',monospace;font-size:10px;line-height:1.6;max-width:220px;">
-         <strong style="color:var(--accent,#e8ff47)">${displayName}</strong><br>
-         <span style="color:#888;font-size:9px;">${formattedAddr}</span>
-       </div>`
-    );
-    infowindow.open(gmap, searchMarker);
-  });
-}
-
-function addMapPoint(lat, lng){
-  mapPts.push([lat, lng]);
-
-  // Yellow dot marker — AdvancedMarkerElement (v3.56+) with legacy Marker fallback
-  let marker;
-  const AdvMarker = google.maps.marker && google.maps.marker.AdvancedMarkerElement;
-  if(AdvMarker){
-    const pin = document.createElement('div');
-    pin.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#e8ff47;border:2px solid #0a0c0f;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:bold;color:#0a0c0f;font-family:monospace;';
-    pin.textContent = String(mapPts.length);
-    marker = new AdvMarker({ position:{lat,lng}, map:gmap, content:pin, zIndex:10 });
-  } else {
-    marker = new google.maps.Marker({
-      position: {lat, lng},
-      map: gmap,
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 6,
-        fillColor: '#e8ff47',
-        fillOpacity: 1,
-        strokeColor: '#0a0c0f',
-        strokeWeight: 2
-      },
-      label: { text: String(mapPts.length), color: '#0a0c0f', fontSize: '9px', fontWeight: 'bold' },
-      zIndex: 10
-    });
-  }
-  gmapMarkers.push(marker);
-  updateGmapOverlay();
-  updateMapDisplay();
-}
-
-function updateGmapOverlay(){
-  const latLngs = mapPts.map(p => ({lat: p[0], lng: p[1]}));
-  if(gmapPolyline) gmapPolyline.setPath(latLngs);
-  if(gmapPolygon){
-    if(latLngs.length >= 3){
-      gmapPolygon.setPath(latLngs);
-      gmapPolygon.setVisible(true);
-    } else {
-      gmapPolygon.setVisible(false);
-    }
-  }
-}
-
-function clearMapPts(){
-  mapPts = [];
-  gmapMarkers.forEach(m => m.setMap(null));
-  gmapMarkers = [];
-  if(gmapPolyline) gmapPolyline.setPath([]);
-  if(gmapPolygon){ gmapPolygon.setPath([]); gmapPolygon.setVisible(false); }
-  updateMapDisplay();
-}
-
-function undoLastPt(){
-  if(mapPts.length === 0) return;
-  mapPts.pop();
-  const mk = gmapMarkers.pop();
-  if(mk) mk.setMap(null);
-  updateGmapOverlay();
-  updateMapDisplay();
-}
-
-function updateMapDisplay(){
-  const disp = document.getElementById('mapCoordsDisplay');
-  const cnt  = document.getElementById('ptCount');
-  if(!disp) return;
-  if(mapPts.length === 0){
-    disp.textContent = 'No points yet. Click map to start.';
-    if(cnt) cnt.textContent = '0 points';
-    return;
-  }
-  disp.textContent = mapPts.map((p,i) =>
-    `${i+1}: ${p[0].toFixed(6)}, ${p[1].toFixed(6)}`
-  ).join('\n');
-  if(cnt) cnt.textContent = `${mapPts.length} point${mapPts.length!==1?'s':''}${mapPts.length>=3?' ✓':''}`;
-}
-
-function useMapCoords(){
-  if(mapPts.length < 3){
-    alert('Need at least 3 points. Keep clicking on the map to mark lot corners.');
-    return;
-  }
-  document.getElementById('coordInput').value =
-    mapPts.map(p => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join('\n');
-  setMode('ll');
-  switchTab('plan2d');
-  runSim();
-}
-
-// ═══════════════════════════════════════════════════════════════
-// GEOJSON IMPORT
-// ═══════════════════════════════════════════════════════════════
-function importGeoJSON(event){
-  const file = event.target.files[0];
-  if(!file) return;
-  const statusEl = document.getElementById('geojsonStatus');
-  const reader = new FileReader();
-  reader.onload = function(e){
-    try{
-      const gj = JSON.parse(e.target.result);
-      let coords = null;
-      let layerName = file.name;
-
-      // Support FeatureCollection, Feature, or raw Geometry
-      let features = [];
-      if(gj.type === 'FeatureCollection') features = gj.features || [];
-      else if(gj.type === 'Feature') features = [gj];
-      else if(gj.type === 'Polygon' || gj.type === 'MultiPolygon') features = [{geometry: gj, properties:{}}];
-
-      // Find first Polygon or MultiPolygon geometry
-      for(const feat of features){
-        const geom = feat.geometry || feat;
-        if(!geom) continue;
-        if(geom.type === 'Polygon'){
-          coords = geom.coordinates[0]; // outer ring
-          if(feat.properties && feat.properties.name) layerName = feat.properties.name;
-          break;
-        } else if(geom.type === 'MultiPolygon'){
-          coords = geom.coordinates[0][0]; // first ring of first polygon
-          break;
-        }
-      }
-
-      if(!coords || coords.length < 3){
-        throw new Error('No valid Polygon geometry found in file.');
-      }
-
-      // Remove closing duplicate point if present
-      const first = coords[0], last = coords[coords.length-1];
-      if(first[0]===last[0] && first[1]===last[1]) coords = coords.slice(0,-1);
-
-      // Detect coordinate type: geographic [lon,lat] or projected [x,y]
-      const isGeo = Math.abs(coords[0][0]) <= 180 && Math.abs(coords[0][1]) <= 90;
-
-      let lines;
-      if(isGeo){
-        // GeoJSON spec: [longitude, latitude]
-        lines = coords.map(c => `${c[1].toFixed(6)},${c[0].toFixed(6)}`).join('\n');
-        setMode('ll');
-        statusEl.textContent = `✓ Imported "${layerName}" — ${coords.length} vertices (Lat/Lon). Mode set to Lat,Lon.`;
-      } else {
-        // Projected coordinates (meters)
-        lines = coords.map(c => `${c[0].toFixed(2)},${c[1].toFixed(2)}`).join('\n');
-        setMode('xy');
-        statusEl.textContent = `✓ Imported "${layerName}" — ${coords.length} vertices (projected meters). Mode set to X,Y.`;
-      }
-
-      document.getElementById('coordInput').value = lines;
-      statusEl.style.display = 'block';
-      statusEl.style.borderColor = 'var(--green)';
-      statusEl.style.color = 'var(--green)';
-      statusEl.style.background = '#0a2010';
-      runSim();
-    } catch(err){
-      statusEl.textContent = '⚠ GeoJSON Error: ' + err.message;
-      statusEl.style.display = 'block';
-      statusEl.style.borderColor = 'var(--red)';
-      statusEl.style.color = 'var(--red)';
-      statusEl.style.background = '#2a1010';
-    }
-    // Reset file input so same file can be re-imported
-    event.target.value = '';
-  };
-  reader.readAsText(file);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// DXF CAD EXPORT
-// ═══════════════════════════════════════════════════════════════
-function exportDXF(){
-  if(!R){ alert('Run simulation first.'); return; }
-  const{pts,buildings,yards,sramps,uRamp,cylRamp,mepRect,ghRect,bz,b,
-        parkingRows,periGreen,fireRoad,lotArea,totGFA,buarActual,plinthPct}=R;
-
-  const lines = [];
-
-  // ── DXF Header ──────────────────────────────────────────────
-  lines.push('0','SECTION','2','HEADER',
-    '9','$ACADVER','1','AC1015',
-    '9','$INSUNITS','70','4', // 4 = meters
-    '9','$EXTMIN','10',b.minX.toFixed(3),'20',b.minY.toFixed(3),'30','0.000',
-    '9','$EXTMAX','10',b.maxX.toFixed(3),'20',b.maxY.toFixed(3),'30','0.000',
-    '0','ENDSEC');
-
-  // ── Tables section with layers ───────────────────────────────
-  lines.push('0','SECTION','2','TABLES','0','TABLE','2','LAYER','70','20');
-  const layerDefs = [
-    ['LOT_BOUNDARY',     1,  'Continuous'],
-    ['BUILDINGS',        4,  'Continuous'],
-    ['TRUCK_YARDS',      3,  'Continuous'],
-    ['STR_RAMPS',        6,  'Continuous'],
-    ['U_RAMP',           5,  'Continuous'],
-    ['HELIX_RAMP',       4,  'Continuous'],
-    ['MEP_AREA',         6,  'Continuous'],
-    ['GUARD_HOUSE',      2,  'Continuous'],
-    ['PERIMETER_GREEN',  3,  'Continuous'],
-    ['FIRE_ROAD',        5,  'Continuous'],
-    ['PARKING',          2,  'Continuous'],
-    ['BUILDABLE_ZONE',   8,  'DASHED'],
-    ['DIMENSIONS',       7,  'Continuous'],
-    ['ANNOTATIONS',      7,  'Continuous'],
-  ];
-  layerDefs.forEach(([name,color,ltype])=>{
-    lines.push('0','LAYER','2',name,'70','0','62',String(color),'6',ltype);
-  });
-  lines.push('0','ENDTAB','0','ENDSEC');
-
-  // ── Entities section ─────────────────────────────────────────
-  lines.push('0','SECTION','2','ENTITIES');
-
-  // Helper: write a closed LWPOLYLINE
-  function lwpoly(pts2d, layer, closed=true){
-    lines.push('0','LWPOLYLINE','8',layer,'90',String(pts2d.length),'70',closed?'1':'0');
-    pts2d.forEach(([x,y])=>{ lines.push('10',x.toFixed(4),'20',y.toFixed(4)); });
-  }
-
-  // Helper: write a rectangle as LWPOLYLINE
-  function rect(x,y,w,h,layer){
-    lwpoly([[x,y],[x+w,y],[x+w,y+h],[x,y+h]], layer);
-  }
-
-  // Helper: TEXT entity
-  function text(x,y,h,str,layer){
-    lines.push('0','TEXT','8',layer,'10',x.toFixed(3),'20',y.toFixed(3),'30','0',
-               '40',h.toFixed(3),'1',str);
-  }
-
-  // Helper: CIRCLE
-  function circle(cx,cy,r,layer){
-    lines.push('0','CIRCLE','8',layer,'10',cx.toFixed(4),'20',cy.toFixed(4),'30','0','40',r.toFixed(4));
-  }
-
-  // Helper: LINE
-  function line(x1,y1,x2,y2,layer){
-    lines.push('0','LINE','8',layer,'10',x1.toFixed(4),'20',y1.toFixed(4),'30','0',
-               '11',x2.toFixed(4),'21',y2.toFixed(4),'31','0');
-  }
-
-  // Lot boundary
-  lwpoly(pts, 'LOT_BOUNDARY');
-
-  // Buildable zone (dashed)
-  rect(bz.x, bz.y, bz.w, bz.h, 'BUILDABLE_ZONE');
-
-  // Perimeter green strip — represented as offset annotation lines
-  // (draw inner boundary of green zone)
-  const greenInner = periGreen;
-  rect(b.minX+greenInner, b.minY+greenInner,
-       b.maxX-b.minX-greenInner*2, b.maxY-b.minY-greenInner*2, 'PERIMETER_GREEN');
-
-  // Fire road inner boundary
-  const frOff = periGreen+fireRoad;
-  rect(b.minX+frOff, b.minY+frOff,
-       b.maxX-b.minX-frOff*2, b.maxY-b.minY-frOff*2, 'FIRE_ROAD');
-
-  // Parking rows
-  Object.values(parkingRows).forEach(pr=>rect(pr.x,pr.y,pr.w,pr.h,'PARKING'));
-
-  // Buildings
-  buildings.forEach(bd=>{
-    rect(bd.x, bd.y, bd.w, bd.h, 'BUILDINGS');
-    text(bd.x+bd.w/2, bd.y+bd.h/2+1, 3, `BLDG ${bd.id} · ${bd.storeys}F`, 'ANNOTATIONS');
-    text(bd.x+bd.w/2, bd.y+bd.h/2-3, 2, `${bd.fp.toFixed(0)}m2/flr · GFA ${bd.totGFA.toFixed(0)}m2`, 'ANNOTATIONS');
-  });
-
-  // Yards
-  yards.forEach(y=>{
-    rect(y.x, y.y, y.w, y.h, 'TRUCK_YARDS');
-    text(y.x+y.w/2, y.y+y.h/2, 2.5, y.label, 'ANNOTATIONS');
-  });
-
-  // Straight ramps
-  sramps.forEach(r=>{
-    rect(r.x, r.y, r.w, r.h, 'STR_RAMPS');
-    // Hatch lines
-    for(let i=0; i<r.h; i+=2) line(r.x, r.y+i, r.x+r.w, r.y+i, 'STR_RAMPS');
-    text(r.x+r.w/2, r.y+r.h/2, 1.8, `STR ${r.slopeStr}`, 'ANNOTATIONS');
-  });
-
-  // U-ramp (approximated as two rectangles + circles for the arcs)
-  if(uRamp){
-    const ur = uRamp;
-    // Left arm
-    rect(ur.x, ur.y, ur.outerR-ur.innerR, ur.strL, 'U_RAMP');
-    // Right arm
-    rect(ur.x+ur.outerR+ur.innerR, ur.y, ur.outerR-ur.innerR, ur.strL, 'U_RAMP');
-    // Outer arc (semi-circle) — represented as circle
-    circle(ur.x+ur.outerR, ur.y+ur.strL, ur.outerR, 'U_RAMP');
-    // Inner arc
-    circle(ur.x+ur.outerR, ur.y+ur.strL, ur.innerR, 'U_RAMP');
-    text(ur.x+ur.outerR, ur.y+ur.strL+ur.outerR*0.4, 2, 'U-RAMP', 'ANNOTATIONS');
-    text(ur.x+ur.outerR, ur.y+ur.strL+ur.outerR*0.4-3, 1.5, `Ri=${ur.innerR}m Ro=${ur.outerR}m`, 'ANNOTATIONS');
-  }
-
-  // Helix ramp
-  if(cylRamp){
-    circle(cylRamp.cx, cylRamp.cy, cylRamp.outerR, 'HELIX_RAMP');
-    circle(cylRamp.cx, cylRamp.cy, cylRamp.coreR, 'HELIX_RAMP');
-    text(cylRamp.cx, cylRamp.cy+0.5, 2, `CYL ${cylRamp.turns}T`, 'ANNOTATIONS');
-  }
-
-  // MEP area
-  rect(mepRect.x, mepRect.y, mepRect.w, mepRect.h, 'MEP_AREA');
-  text(mepRect.x+mepRect.w/2, mepRect.y+mepRect.h/2, 2, `MEP ${R.mepAreaTarget}m2`, 'ANNOTATIONS');
-
-  // Guard house
-  rect(ghRect.x, ghRect.y, ghRect.w, ghRect.h, 'GUARD_HOUSE');
-  text(ghRect.x+ghRect.w/2, ghRect.y+ghRect.h/2, 1.8, 'GH', 'ANNOTATIONS');
-
-  // Dimension annotations (horizontal)
-  const dimY = b.minY - 8;
-  const lotW = b.maxX - b.minX;
-  const lotH = b.maxY - b.minY;
-  line(b.minX, dimY, b.maxX, dimY, 'DIMENSIONS');
-  line(b.minX, dimY-2, b.minX, dimY+2, 'DIMENSIONS');
-  line(b.maxX, dimY-2, b.maxX, dimY+2, 'DIMENSIONS');
-  text(b.minX+lotW/2, dimY-4, 2.5, `${lotW.toFixed(1)}m`, 'DIMENSIONS');
-  // Vertical
-  const dimX = b.maxX + 8;
-  line(dimX, b.minY, dimX, b.maxY, 'DIMENSIONS');
-  line(dimX-2, b.minY, dimX+2, b.minY, 'DIMENSIONS');
-  line(dimX-2, b.maxY, dimX+2, b.maxY, 'DIMENSIONS');
-  text(dimX+2, b.minY+lotH/2, 2.5, `${lotH.toFixed(1)}m`, 'DIMENSIONS');
-
-  // Title block annotation
-  text(b.minX, b.minY-16, 3.5, 'WAREHOUSE TEST-FIT PLAN — IWTFS v4.2', 'ANNOTATIONS');
-  text(b.minX, b.minY-20, 2, `Lot ${lotArea.toFixed(0)}m2  |  GFA ${totGFA.toFixed(0)}m2  |  BUAR ${buarActual.toFixed(3)}  |  Plinth ${plinthPct.toFixed(1)}%`, 'ANNOTATIONS');
-  text(b.minX, b.minY-24, 2, `Scale 1:1 (meters)  |  All dims per BP 957/DPWH/RROW`, 'ANNOTATIONS');
-
-  lines.push('0','ENDSEC','0','EOF');
-
-  // Download
-  const dxf = lines.join('\n');
-  const blob = new Blob([dxf], {type:'application/dxf'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'warehouse_testfit.dxf';
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 
 function switchTab(id){
   const ids=['plan2d','view3d','gfa','parking','compliance','geodata','map'];
@@ -2332,8 +1397,8 @@ function switchTab(id){
   document.getElementById('pane-'+id).classList.add('active');
   if(id==='plan2d')draw2D();
   if(id==='view3d')draw3D();
-  if(id==='map') { /* map initialised manually by user clicking Load button */ }
 }
+
 function sd(e){cam.dragging=true;cam.lastX=e.clientX;cam.lastY=e.clientY;}
 function ed(){cam.dragging=false;}
 function od(e){
@@ -2355,16 +1420,6 @@ window.addEventListener('resize',()=>{draw2D();draw3D();});
 // ═══════════════════════════════════════════════════════════════
 document.getElementById('coordInput').value=PRESETS.rect;
 runSim();
-
-// Extended Component Library init — fires after DOM is ready.
-// If the map tab has already been opened and _gmapReady() has run,
-// initPlacePicker() will be called directly from there. This listener
-// ensures it also runs if the ECL script finishes loading after that.
-document.addEventListener('DOMContentLoaded', () => {
-  // Nothing to do here synchronously — initPlacePicker() is called
-  // from _gmapReady() once the Maps JS API is fully loaded.
-  // The async/await inside initPlacePicker() handles the ECL timing.
-});
 </script>
 </body>
 </html>
