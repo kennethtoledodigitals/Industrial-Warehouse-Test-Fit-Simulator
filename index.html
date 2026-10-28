@@ -212,11 +212,9 @@ gmpx-place-picker{
       <div><label>Yard W (m)</label><input type="number" id="yW" value="20" min="15" max="50" step="1"></div>
       <div><label>Office Mezz %</label><input type="number" id="offP" value="3" min="1" max="15" step="0.5"></div>
     </div>
-    <div class="g2">
-      <div><label>Parking Stall</label>
-        <select id="stallSz"><option value="12.5">2.5×5.0m Std</option><option value="13.5">2.7×5.0m Wide</option></select>
-      </div>
-      <div><label>Min Landscape %</label><input type="number" id="minL" value="10" min="5" max="40"></div>
+    <div style="margin-bottom:5px">
+      <label>Parking Stall</label>
+      <select id="stallSz"><option value="12.5">2.5×5.0m Std</option><option value="13.5">2.7×5.0m Wide</option></select>
     </div>
   </div>
 
@@ -367,7 +365,7 @@ gmpx-place-picker{
           </div>
           <button class="btn" style="width:200px;margin-top:8px" onclick="initGoogleMap()">Load Google Maps</button>
           <div id="apiKeyWarning" style="font-size:9px;color:var(--amber);text-align:center;max-width:380px;line-height:1.6;margin-top:8px;background:#1a1200;border:1px solid #3a3000;padding:8px;">
-            ⚠️ <strong>API Key required.</strong> Open this file in a text editor and replace <code style="color:var(--red)">YOUR_API_KEY</code> near line 1387 with your own key from <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent2)">Google Cloud Console</a>. Enable the <em>Maps JavaScript API</em> and <em>Places API</em>.
+            ⚠️ <strong>API Key required.</strong> Open this file in a text editor and replace <code style="color:var(--red)">YOUR_API_KEY</code> at <code style="color:var(--accent)">GMAPS_API_KEY</code> in the script with your own key from <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent2)">Google Cloud Console</a>. Enable the <em>Maps JavaScript API</em> and <em>Places API</em>.
           </div>
           <div style="font-size:9px;color:var(--dim);text-align:center;max-width:380px;line-height:1.6;margin-top:4px;">
             💡 <strong style="color:var(--amber)">Alternative:</strong> In Google Maps, right-click any corner of your lot → copy the coordinates shown → paste into the left panel using <em>Lat,Lon (Google)</em> mode.
@@ -570,8 +568,8 @@ function maxInscribedRect(poly, setbackPoly){
     ];
     // Map back to unrotated space
     return corners.every(([x, y]) => {
-      const ux = cx + x*cos - y*sin;
-      const uy = cy + x*sin + y*cos;
+      const ux = cx + (x-cx)*cos - (y-cy)*sin;
+      const uy = cy + (x-cx)*sin + (y-cy)*cos;
       return ptInPoly(ux, uy, targetPoly);
     });
   }
@@ -615,12 +613,8 @@ function maxInscribedRect(poly, setbackPoly){
             angle: ang, cos: cos, sin: sin,
             cx: cx, cy: cy,
             // 4 corners in original coordinate space
-            corners: [
-              [cx + x*cos - y*sin, cy + x*sin + y*cos],
-              [cx + (x+lo)*cos - y*sin, cy + (x+lo)*sin + y*cos],
-              [cx + (x+lo)*cos - (y+hlo)*sin, cy + (x+lo)*sin + (y+hlo)*cos],
-              [cx + x*cos - (y+hlo)*sin, cy + x*sin + (y+hlo)*cos]
-            ]
+            corners: [[x,y],[x+lo,y],[x+lo,y+hlo],[x,y+hlo]].map(([px,py])=>
+              [cx + (px-cx)*cos - (py-cy)*sin, cy + (px-cx)*sin + (py-cy)*cos])
           };
         }
       }
@@ -645,6 +639,7 @@ function insetPolygonVariable(pts, offsets){
   let area=0;
   for(let i=0;i<n;i++){const j=(i+1)%n;area+=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1];}
   const poly = area>0 ? pts.slice() : pts.slice().reverse();
+  if(area<=0 && typeof offsets!=='number') offsets = poly.map((_,i)=>offsets[(n-2-i+n)%n % offsets.length]);
 
   const offsetEdges=[];
   for(let i=0;i<n;i++){
@@ -654,7 +649,7 @@ function insetPolygonVariable(pts, offsets){
     if(len<1e-9){offsetEdges.push([a,b2]);continue;}
     const nx=-ey/len, ny=ex/len;
     // Map edge direction to front/rear/left/right offset
-    let d = typeof offsets === 'number' ? offsets : offsets[i % offsets.length] || 3;
+    let d = typeof offsets === 'number' ? offsets : offsets[i % offsets.length] ?? 3;
     offsetEdges.push([[a[0]+nx*d, a[1]+ny*d],[b2[0]+nx*d, b2[1]+ny*d]]);
   }
 
@@ -895,8 +890,8 @@ function runSim(){
   function mapToGlobal(lx, ly){
     if(lz.angle === 0) return [lx, ly];
     return [
-      lz.cx + lx*lz.cos - ly*lz.sin,
-      lz.cy + lx*lz.sin + ly*lz.cos
+      lz.cx + (lx-lz.cx)*lz.cos - (ly-lz.cy)*lz.sin,
+      lz.cy + (lx-lz.cx)*lz.sin + (ly-lz.cy)*lz.cos
     ];
   }
 
@@ -1103,9 +1098,9 @@ function draw2D(){
   const pad=56;
   const sc=Math.min((cv.width-pad*2)/(b.maxX-b.minX),(cv.height-pad*2)/(b.maxY-b.minY));
   const ox=pad+(cv.width-pad*2-(b.maxX-b.minX)*sc)/2-b.minX*sc;
-  const oy=pad+(cv.height-pad*2-(b.maxY-b.minY)*sc)/2-b.minY*sc;
+  const oy=pad+(cv.height-pad*2-(b.maxY-b.minY)*sc)/2+b.maxY*sc;
   const tx=x=>ox+x*sc;
-  const ty=y=>oy+y*sc;
+  const ty=y=>oy-y*sc;
   const sw=v=>v*sc;
 
   ctx.clearRect(0,0,cv.width,cv.height);
@@ -1205,12 +1200,28 @@ function draw2D(){
     }
   });
 
+  // U-ramp & helix
+  if(uRamp){
+    const L=(x,y)=>{const p=lz.angle?[lz.cx+(x-lz.cx)*lz.cos-(y-lz.cy)*lz.sin,lz.cy+(x-lz.cx)*lz.sin+(y-lz.cy)*lz.cos]:[x,y];return[tx(p[0]),ty(p[1])];};
+    const a=uRamp.x,r=uRamp.outerR,y0=uRamp.y,y1=uRamp.headY,seg=[];
+    seg.push(L(a,y0),L(a+2*r,y0),L(a+2*r,y1));
+    for(let k=1;k<=20;k++){const t=Math.PI*k/20;seg.push(L(a+r+r*Math.cos(t),y1+r*Math.sin(t)));}
+    seg.push(L(a,y1));
+    ctx.beginPath();seg.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
+    ctx.fillStyle='#1a0a2a';ctx.fill();ctx.strokeStyle='#b47fff';ctx.lineWidth=1.2;ctx.stroke();
+  }
+  if(cylRamp){
+    const c=[tx(cylRamp.cx),ty(cylRamp.cy)];
+    [cylRamp.outerR,cylRamp.coreR].forEach((rr,i)=>{ctx.beginPath();ctx.arc(c[0],c[1],sw(rr),0,Math.PI*2);
+      ctx.fillStyle=i?'#060810':'#0a1a2a';ctx.fill();ctx.strokeStyle='#47c8ff';ctx.lineWidth=1.2;ctx.stroke();});
+  }
+
   // MEP
   {
     const mCorners = [
       [mepRect.x, mepRect.y], [mepRect.x+mepRect.w, mepRect.y],
       [mepRect.x+mepRect.w, mepRect.y+mepRect.h], [mepRect.x, mepRect.y+mepRect.h]
-    ].map(p => lz.angle ? [lz.cx + p[0]*lz.cos - p[1]*lz.sin, lz.cy + p[0]*lz.sin + p[1]*lz.cos] : p);
+    ].map(p => lz.angle ? [lz.cx + (p[0]-lz.cx)*lz.cos - (p[1]-lz.cy)*lz.sin, lz.cy + (p[0]-lz.cx)*lz.sin + (p[1]-lz.cy)*lz.cos] : p);
     drawPolyCorners(mCorners, 'rgba(30,10,40,0.85)', '#b47fff');
   }
 
@@ -1219,7 +1230,7 @@ function draw2D(){
     const gCorners = [
       [ghRect.x, ghRect.y], [ghRect.x+ghRect.w, ghRect.y],
       [ghRect.x+ghRect.w, ghRect.y+ghRect.h], [ghRect.x, ghRect.y+ghRect.h]
-    ].map(p => lz.angle ? [lz.cx + p[0]*lz.cos - p[1]*lz.sin, lz.cy + p[0]*lz.sin + p[1]*lz.cos] : p);
+    ].map(p => lz.angle ? [lz.cx + (p[0]-lz.cx)*lz.cos - (p[1]-lz.cy)*lz.sin, lz.cy + (p[0]-lz.cx)*lz.sin + (p[1]-lz.cy)*lz.cos] : p);
     drawPolyCorners(gCorners, 'rgba(10,20,30,0.9)', '#e8ff47');
   }
 
@@ -1397,6 +1408,7 @@ function switchTab(id){
   document.getElementById('pane-'+id).classList.add('active');
   if(id==='plan2d')draw2D();
   if(id==='view3d')draw3D();
+  if(id==='map'&&!mapInstance)initGoogleMap();
 }
 
 function sd(e){cam.dragging=true;cam.lastX=e.clientX;cam.lastY=e.clientY;}
@@ -1415,6 +1427,117 @@ function ow(e){
 }
 window.addEventListener('resize',()=>{draw2D();draw3D();});
 
+
+// ═══════════════════════════════════════════════════════════════
+// GEOJSON IMPORT
+// ═══════════════════════════════════════════════════════════════
+function importGeoJSON(ev){
+  const f=ev.target.files[0]; if(!f)return;
+  const st=document.getElementById('geojsonStatus'), er=document.getElementById('errMsg');
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      let g=JSON.parse(rd.result);
+      if(g.type==='FeatureCollection') g=g.features.find(x=>x.geometry&&/Polygon/.test(x.geometry.type));
+      if(g&&g.type==='Feature') g=g.geometry;
+      if(!g||!/Polygon/.test(g.type)) throw new Error('No Polygon found in GeoJSON');
+      let ring=g.type==='Polygon'?g.coordinates[0]:g.coordinates[0][0];
+      ring=ring.map(c=>[c[1],c[0]]); // GeoJSON is [lon,lat]
+      const a=ring[0],z=ring[ring.length-1];
+      if(ring.length>3&&a[0]===z[0]&&a[1]===z[1]) ring.pop();
+      document.getElementById('coordInput').value=ring.map(p=>p[0]+','+p[1]).join('\n');
+      setMode('ll');
+      st.textContent='✓ Imported '+ring.length+' vertices from '+f.name; st.style.display='block';
+      runSim();
+    }catch(e){
+      st.style.display='none'; er.textContent='⚠ GeoJSON: '+e.message; er.style.display='block';
+    }
+    ev.target.value='';
+  };
+  rd.readAsText(f);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DXF EXPORT (R12 ASCII, one layer per element type)
+// ═══════════════════════════════════════════════════════════════
+function exportDXF(){
+  if(!R){alert('Run the simulation first.');return;}
+  const out=['0','SECTION','2','ENTITIES'];
+  const poly=(layer,pp,closed=true)=>{
+    out.push('0','POLYLINE','8',layer,'66','1','70',closed?'1':'0');
+    pp.forEach(p=>out.push('0','VERTEX','8',layer,'10',p[0].toFixed(3),'20',p[1].toFixed(3),'30','0'));
+    out.push('0','SEQEND','8',layer);
+  };
+  const circ=(layer,x,y,r)=>out.push('0','CIRCLE','8',layer,'10',x.toFixed(3),'20',y.toFixed(3),'30','0','40',r.toFixed(3));
+  poly('LOT_BOUNDARY',R.pts);
+  if(R.setbackPoly&&R.setbackPoly.length>=3) poly('SETBACK',R.setbackPoly);
+  R.buildings.forEach(b=>poly('BUILDING_'+b.id,b.polyCorners));
+  R.yards.forEach(y=>poly('TRUCK_YARD',y.polyCorners));
+  R.sramps.forEach(r=>poly('RAMP_STRAIGHT',r.polyCorners));
+  const lz=R.lz,G=(x,y)=>lz.angle?[lz.cx+(x-lz.cx)*lz.cos-(y-lz.cy)*lz.sin,lz.cy+(x-lz.cx)*lz.sin+(y-lz.cy)*lz.cos]:[x,y];
+  const rc=r=>[[r.x,r.y],[r.x+r.w,r.y],[r.x+r.w,r.y+r.h],[r.x,r.y+r.h]].map(p=>G(p[0],p[1]));
+  poly('MEP',rc(R.mepRect)); poly('GUARD_HOUSE',rc(R.ghRect));
+  if(R.cylRamp){circ('RAMP_HELIX',R.cylRamp.cx,R.cylRamp.cy,R.cylRamp.coreR);circ('RAMP_HELIX',R.cylRamp.cx,R.cylRamp.cy,R.cylRamp.outerR);}
+  R.parkingEdgeRows.forEach(row=>row.stalls.forEach(s=>poly('PARKING',s)));
+  out.push('0','ENDSEC','0','EOF');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([out.join('\n')],{type:'application/dxf'}));
+  a.download='testfit_site_plan.dxf'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GOOGLE MAPS SITE PICKER
+// ═══════════════════════════════════════════════════════════════
+const GMAPS_API_KEY='YOUR_API_KEY'; // <-- paste your Google Maps key here
+let _gmapLoading=false;
+function initGoogleMap(){
+  if(mapInstance){return;}
+  if(window.google&&google.maps&&google.maps.Map){_gmapReady();return;}
+  if(_gmapLoading)return;
+  if(GMAPS_API_KEY==='YOUR_API_KEY'){
+    document.getElementById('apiKeyWarning').style.border='1px solid var(--red)';
+    return;
+  }
+  _gmapLoading=true;
+  window._gmapReady=_gmapReady;
+  const sc=document.createElement('script');
+  sc.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(GMAPS_API_KEY)+'&libraries=places,marker&callback=_gmapReady&loading=async';
+  sc.onerror=()=>{_gmapLoading=false;alert('Failed to load Google Maps. Check your API key and network.');};
+  document.head.appendChild(sc);
+}
+function _gmapReady(){
+  _gmapLoading=false;
+  document.getElementById('gmap-placeholder').style.display='none';
+  mapInstance=new google.maps.Map(document.getElementById('gmap'),{
+    center:{lat:14.5790,lng:121.0465},zoom:18,mapTypeId:'satellite',disableDoubleClickZoom:true,streetViewControl:false});
+  mapInstance.addListener('click',e=>{mapPts.push([e.latLng.lat(),e.latLng.lng()]);redrawMapPts();});
+  mapInstance.addListener('rightclick',()=>undoLastPt());
+  const pp=document.getElementById('placePicker');
+  if(pp) pp.addEventListener('gmpx-placechange',()=>{
+    const p=pp.value; if(!p||!p.location)return;
+    if(p.viewport) mapInstance.fitBounds(p.viewport); else {mapInstance.setCenter(p.location);mapInstance.setZoom(19);}
+  });
+}
+function redrawMapPts(){
+  if(!mapInstance)return;
+  mapMarkers.forEach(m=>m.setMap(null)); mapMarkers=[];
+  if(mapLine){mapLine.setMap(null);mapLine=null;}
+  const path=mapPts.map(p=>({lat:p[0],lng:p[1]}));
+  path.forEach(p=>mapMarkers.push(new google.maps.Marker({position:p,map:mapInstance,
+    icon:{path:google.maps.SymbolPath.CIRCLE,scale:5,fillColor:'#3dff9a',fillOpacity:1,strokeColor:'#000',strokeWeight:1}})));
+  if(path.length>1) mapLine=new google.maps.Polygon({paths:path,map:mapInstance,strokeColor:'#e8ff47',strokeWeight:2,fillColor:'#e8ff47',fillOpacity:0.12});
+  document.getElementById('mapCoordsDisplay').textContent=mapPts.length?mapPts.map(p=>p[0].toFixed(6)+','+p[1].toFixed(6)).join('\n'):'No points yet. Click map to start.';
+  document.getElementById('ptCount').textContent=mapPts.length+' point'+(mapPts.length===1?'':'s');
+}
+function clearMapPts(){mapPts=[];redrawMapPts();}
+function undoLastPt(){mapPts.pop();redrawMapPts();}
+function useMapCoords(){
+  if(mapPts.length<3){alert('Pick at least 3 points on the map.');return;}
+  document.getElementById('coordInput').value=mapPts.map(p=>p[0].toFixed(7)+','+p[1].toFixed(7)).join('\n');
+  setMode('ll'); switchTab('plan2d'); runSim();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════
@@ -1425,11 +1548,7 @@ runSim();
 // If the map tab has already been opened and _gmapReady() has run,
 // initPlacePicker() will be called directly from there. This listener
 // ensures it also runs if the ECL script finishes loading after that.
-document.addEventListener('DOMContentLoaded', () => {
-  // Nothing to do here synchronously — initPlacePicker() is called
-  // from _gmapReady() once the Maps JS API is fully loaded.
-  // The async/await inside initPlacePicker() handles the ECL timing.
-});
+
 </script>
 </body>
 </html>
