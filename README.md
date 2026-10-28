@@ -4,7 +4,7 @@
 
 > A fully browser-based industrial warehouse test-fit tool for architects, planners, and developers. Trace any lot shape using Google Maps or import a GeoJSON file, configure buildings and ramps, and instantly generate a compliant site layout with GFA breakdown, parking schedule, GeoDataFrame export, and CAD/DXF output — no software required.
 
-🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/)
+🔗 **Live Demo:** [https://kennethtoledodigitals.github.io/Industrial-Warehouse-Test-Fit-Simulator/](https://github.com/kennethtoledodigitals/Industrial-Warehouse-Test-Fit-Simulator/blob/627da4bcf509d0b291fef989976ca286d265afa1/index.html/)
 
 ---
 
