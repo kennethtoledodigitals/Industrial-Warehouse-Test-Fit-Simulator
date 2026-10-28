@@ -1,4 +1,4 @@
-[README (2).md](https://github.com/user-attachments/files/34070306/README.2.md)
+[Uploading README (2).md…]()
 # 🏭 Industrial Warehouse Test-Fit Simulator (IWTFS)
 ### Design Simulator v4.5 — Browser-Based, Zero Installation
 
@@ -51,7 +51,7 @@ Ramps are only generated for buildings with **2 or more storeys**.
 | Badge | Type | Slope | Description |
 |---|---|---|---|
 | `STR` | Straight Ramp | 1:12 (8.33%) or 1:10 | Slab at the building corner; configurable width ≥ 9 m and run length |
-| `U-RAMP` | Semi-Circular U-Ramp | Curve 1:20 · Straight arms 1:12 | Two straight arms + semi-circular head; inner R ≥ 6 m |
+| `U-RAMP` | Semi-Circular Ramp | Curve 1:20 · Straight run 1:12 | Straight run with a semicircle at **both ends** (stadium shape); inner R ≥ 6 m |
 | `CYL` | Cylindrical Helix | ≤ 1:12 along path | Compact spiral core; configurable core radius, lane width, and turns |
 
 ### 🌿 Site Layers (Outside → In)
@@ -87,7 +87,7 @@ Stall size options: 2.5 × 5.0 m (Standard) or 2.7 × 5.0 m (Wide).
 | Tab | Contents |
 |---|---|
 | **2D Site Plan** | North-up canvas plan: lot boundary, green strip, fire-road band, perimeter parking, setback outline, buildings, truck yards, straight ramps, U-ramp, helix, MEP room, guard house, vertex labels, north arrow. Includes the **⬇ Export CAD (.dxf)** button and a live lot/GFA/FAR/plinth summary. |
-| **3D Massing** | Interactive isometric view: drag to rotate, scroll to zoom |
+| **3D Massing** | Interactive isometric view: drag to rotate, scroll to zoom. All three ramp types are modelled: straight ramp (orange wedge), semi-circular ramp (purple sloped slab with rounded ends), and cylindrical helix (blue spiral around a core), each rising one floor height. |
 | **GFA** | Per-building, per-level table: footprint, warehouse GFA, office mezzanine GFA, total GFA, height |
 | **Parking** | Cards for warehouse, office, handicap, and motorcycle slots, plus truck bays |
 | **Compliance** | Pass/fail cards for Plinth %, FAR vs. BUAR limit, and Landscape % |
@@ -284,7 +284,7 @@ Planned, not yet in the current version:
 
 | Version | Changes |
 |---|---|
-| **v4.5** | Oriented largest-inscribed-rectangle layout that follows angled lots; front-road selection with north-up plan; per-edge setbacks; polygon-edge perimeter parking. **Fixes:** rotated-frame coordinate mapping that shrank the buildable zone (default lot went from ~10% to ~49% plinth); setbacks applied to the wrong edges on clockwise polygons; duplicate `minL` input id; 2D plan drawn upside-down; U-ramp and helix now drawn in the 2D plan. Rebuilt the GeoJSON import, DXF export, and Google Maps picker functions. |
+| **v4.5** | 3D massing now shows all three ramp types; semi-circular ramp redesigned with a semicircle at both ends (footprint = L×2R + πR²). Oriented largest-inscribed-rectangle layout that follows angled lots; front-road selection with north-up plan; per-edge setbacks; polygon-edge perimeter parking. **Fixes:** rotated-frame coordinate mapping that shrank the buildable zone (default lot went from ~10% to ~49% plinth); setbacks applied to the wrong edges on clockwise polygons; duplicate `minL` input id; 2D plan drawn upside-down; U-ramp and helix now drawn in the 2D plan. Rebuilt the GeoJSON import, DXF export, and Google Maps picker functions. |
 | **v4.2** | GeoJSON file import; CAD/DXF export; fixed Google Maps polygon overlay blocking satellite imagery |
 | **v4.1** | Replaced Mapbox with Google Maps; in-app site picker with click-to-place vertices, right-click undo, address search, polygon preview |
 | **v4.0** | Fire access road (6 m) with parking; perimeter green strip; 2 m building green strip; MEP area; guard house; U-ramp semi-circular shape |
