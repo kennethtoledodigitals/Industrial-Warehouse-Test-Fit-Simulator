@@ -1420,6 +1420,16 @@ window.addEventListener('resize',()=>{draw2D();draw3D();});
 // ═══════════════════════════════════════════════════════════════
 document.getElementById('coordInput').value=PRESETS.rect;
 runSim();
+
+// Extended Component Library init — fires after DOM is ready.
+// If the map tab has already been opened and _gmapReady() has run,
+// initPlacePicker() will be called directly from there. This listener
+// ensures it also runs if the ECL script finishes loading after that.
+document.addEventListener('DOMContentLoaded', () => {
+  // Nothing to do here synchronously — initPlacePicker() is called
+  // from _gmapReady() once the Maps JS API is fully loaded.
+  // The async/await inside initPlacePicker() handles the ECL timing.
+});
 </script>
 </body>
 </html>
