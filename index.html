@@ -319,7 +319,7 @@ gmpx-place-picker{
     <div id="pane-view3d" class="tp">
       <div class="tb">
         <span style="font-size:9px;color:var(--dim)">🖱 Drag rotate · Scroll zoom</span>
-        <div class="ti" id="info3d">Isometric</div>
+        <div class="ti" id="info3d">Isometric · <span style="color:#ff6b35">■</span> Straight ramp · <span style="color:#b47fff">■</span> Semi-circular ramp · <span style="color:#47c8ff">■</span> Helix</div>
       </div>
       <canvas id="c3d" onmousedown="sd(event)" onmousemove="od(event)" onmouseup="ed()" onmouseleave="ed()" onwheel="ow(event)"></canvas>
     </div>
@@ -385,7 +385,7 @@ let R=null;
 let coordMode='xy';
 let frontRoad='bottom';
 let lotNorthAngle=0; // degrees: clockwise rotation so lot top = true north
-let cam={rotX:32,rotY:-42,zoom:1,dragging:false,lastX:0,lastY:0};
+let cam={rotX:32,rotY:-42,zoom:1.8,dragging:false,lastX:0,lastY:0};
 let mapInstance=null;
 let mapMarkers=[];
 let mapPts=[];
@@ -729,7 +729,7 @@ function calcParking(whGFA,offGFA,stallArea){
 function runSim(){
   const errEl=document.getElementById('errMsg');
   const okEl=document.getElementById('okMsg');
-  errEl.style.display='none';okEl.style.display='none';
+  errEl.style.display='none';okEl.style.display='none';okEl.textContent='';
 
   let rawPts;
   try{rawPts=parseCoords(document.getElementById('coordInput').value);}
@@ -865,7 +865,7 @@ function runSim(){
   const availH = Math.max(10, lz.h - fixedVertical);
   const bldgCount = nBldgs;
 
-  const uRampFPest = useCir ? (crStrL*crOut*2+Math.PI*crOut*crOut/2) : 0;
+  const uRampFPest = useCir ? (crStrL*crOut*2+Math.PI*crOut*crOut) : 0;
   const cylFPest   = useCyl ? Math.PI*((cylR+cylW)**2-cylR**2) : 0;
   const rampFPest  = uRampFPest + cylFPest;
   const yardFP     = nBldgs===1?0 : nBldgs===2?effW*yardW : nBldgs===3?effW*(yardW+Math.max(minYardW,yardW)) : effW*yardW*2;
@@ -959,14 +959,21 @@ function runSim(){
     addBldg(4,lz.x,c,effW,bh,3);
   }
 
-  // U-ramp
+  // U-ramp: straight run with a semicircle at BOTH ends (stadium shape)
   let uRamp=null;
   if(useCir){
-    const ury=Math.max(lz.y,lz.y+lz.h/2-(crOut+crStrL/2));
-    uRamp={type:'u-ramp',x:lz.x+effW+2,y:ury,w:crOut*2,strL:crStrL,
-      innerR:crIn,outerR:crOut,laneW:crW,dir:crDir,headY:ury+crStrL,
-      footprint:crStrL*crOut*2+Math.PI*crOut*crOut/2,
-      center: mapToGlobal(lz.x+effW+2+crOut, ury+crStrL)};
+    const r=crOut, ux0=lz.x+effW+2, cxl=ux0+r;
+    const ury=Math.max(lz.y+r, lz.y+lz.h/2-crStrL/2);   // start of straight run
+    const loc=[[ux0+2*r,ury],[ux0+2*r,ury+crStrL]], N=16;
+    for(let k=1;k<N;k++){const t=Math.PI*k/N;loc.push([cxl+r*Math.cos(t),ury+crStrL+r*Math.sin(t)]);} // top semicircle
+    loc.push([ux0,ury+crStrL],[ux0,ury]);
+    for(let k=1;k<N;k++){const t=Math.PI*k/N;loc.push([cxl-r*Math.cos(t),ury-r*Math.sin(t)]);}          // bottom semicircle
+    uRamp={type:'u-ramp',x:ux0,y:ury,w:r*2,strL:crStrL,
+      innerR:crIn,outerR:r,laneW:crW,dir:crDir,headY:ury+crStrL,
+      footprint:crStrL*r*2+Math.PI*r*r,
+      center: mapToGlobal(cxl, ury+crStrL/2),
+      poly: loc.map(p=>mapToGlobal(p[0],p[1])),
+      tz:   loc.map(p=>(p[1]-(ury-r))/(crStrL+2*r))};   // 0 = low end, 1 = high end
   }
 
   // Cylindrical helix
@@ -1201,15 +1208,7 @@ function draw2D(){
   });
 
   // U-ramp & helix
-  if(uRamp){
-    const L=(x,y)=>{const p=lz.angle?[lz.cx+(x-lz.cx)*lz.cos-(y-lz.cy)*lz.sin,lz.cy+(x-lz.cx)*lz.sin+(y-lz.cy)*lz.cos]:[x,y];return[tx(p[0]),ty(p[1])];};
-    const a=uRamp.x,r=uRamp.outerR,y0=uRamp.y,y1=uRamp.headY,seg=[];
-    seg.push(L(a,y0),L(a+2*r,y0),L(a+2*r,y1));
-    for(let k=1;k<=20;k++){const t=Math.PI*k/20;seg.push(L(a+r+r*Math.cos(t),y1+r*Math.sin(t)));}
-    seg.push(L(a,y1));
-    ctx.beginPath();seg.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();
-    ctx.fillStyle='#1a0a2a';ctx.fill();ctx.strokeStyle='#b47fff';ctx.lineWidth=1.2;ctx.stroke();
-  }
+  if(uRamp&&uRamp.poly) drawPolyCorners(uRamp.poly,'#1a0a2a','#b47fff');
   if(cylRamp){
     const c=[tx(cylRamp.cx),ty(cylRamp.cy)];
     [cylRamp.outerR,cylRamp.coreR].forEach((rr,i)=>{ctx.beginPath();ctx.arc(c[0],c[1],sw(rr),0,Math.PI*2);
@@ -1270,7 +1269,7 @@ function draw3D(){
   const cv=document.getElementById('c3d');
   cv.width=cv.parentElement.clientWidth;cv.height=cv.parentElement.clientHeight;
   const ctx=cv.getContext('2d');
-  const{pts,b,buildings,yards,sramps,mepRect,ghRect,nStor,fh,lz}=R;
+  const{pts,b,buildings,yards,sramps,uRamp,cylRamp,mepRect,ghRect,nStor,fh,lz}=R;
   const cxw=(b.minX+b.maxX)/2,cyw=(b.minY+b.maxY)/2;
   const maxD=Math.max(b.maxX-b.minX,b.maxY-b.minY,nStor*fh);
   const bsc=Math.min(cv.width,cv.height)/(maxD*2.5)*cam.zoom;
@@ -1313,10 +1312,16 @@ function draw3D(){
     if(y.polyCorners) polyBox(y.polyCorners, 0.5, '#0f2a10', '#0a1e0c', '#08180a', '#3dff9a');
   });
 
-  // Straight Ramps
-  sramps.forEach(r => {
-    if(r.polyCorners) polyBox(r.polyCorners, fh*0.2, '#3a2010', '#2a1a08', '#1a1005', '#ff6b35');
-  });
+  // Sloped slab: each vertex has its own height (used by all ramp types)
+  function slab(poly, zs, topC, s1, s2, edge){
+    const n=poly.length;
+    for(let i=0;i<n;i++){
+      const j=(i+1)%n;
+      face([proj(poly[i][0],poly[i][1],0),proj(poly[j][0],poly[j][1],0),
+            proj(poly[j][0],poly[j][1],zs[j]),proj(poly[i][0],poly[i][1],zs[i])],(i%2===0)?s1:s2,edge,1);
+    }
+    face(poly.map((p,i)=>proj(p[0],p[1],zs[i])),topC,edge,1.5);
+  }
 
   // Buildings
   const BTC=['#1a4060','#2a1a50','#0d3020','#302010'];
@@ -1330,6 +1335,29 @@ function draw3D(){
       polyBox(bldg.polyCorners, totalH, BTC[ci], BS1[ci], BS2[ci], BED[ci]);
     }
   });
+
+  // ── RAMPS (rise = one floor height) ──
+  // Straight ramp: wedge rising along its run
+  sramps.forEach(r => {
+    if(r.polyCorners) slab(r.polyCorners,[0,0,fh,fh],'#7a4318','#4a2a10','#341d0a','#ff6b35');
+  });
+  // Semi-circular ramp: straight run with a semicircle at each end, sloping along its length
+  if(uRamp&&uRamp.poly){
+    slab(uRamp.poly,uRamp.tz.map(t=>t*fh),'#5a2f8a','#3a1f5c','#2a1545','#b47fff');
+  }
+  // Cylindrical helix: spiral lane around a core
+  if(cylRamp){
+    const cx0=cylRamp.cx,cy0=cylRamp.cy,Ro=cylRamp.outerR,Ri=cylRamp.coreR;
+    const steps=Math.max(12,Math.round(cylRamp.turns*28)),tot=cylRamp.turns*2*Math.PI;
+    const ring=[];for(let k=0;k<24;k++){const a=2*Math.PI*k/24;ring.push([cx0+Ri*Math.cos(a),cy0+Ri*Math.sin(a)]);}
+    slab(ring,ring.map(()=>fh),'#0d3a55','#082a40','#061c2c','#47c8ff');
+    for(let k=0;k<steps;k++){
+      const a0=tot*k/steps,a1=tot*(k+1)/steps,z0=fh*k/steps,z1=fh*(k+1)/steps;
+      const P=(R_,a,z)=>proj(cx0+R_*Math.cos(a),cy0+R_*Math.sin(a),z);
+      face([P(Ro,a0,0),P(Ro,a1,0),P(Ro,a1,z1),P(Ro,a0,z0)],'#0a3050','#47c8ff',0.5);
+      face([P(Ri,a0,z0),P(Ro,a0,z0),P(Ro,a1,z1),P(Ri,a1,z1)],'#1a6a9a','#47c8ff',0.8);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
