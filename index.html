@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Industrial Warehouse Test-Fit Simulator v4.5</title>
-<!-- Google Maps loaded dynamically when map tab opened -->
-<!-- Extended Component Library for gmp-map, gmpx-place-picker, gmp-advanced-marker -->
-<script async defer src="https://ajax.googleapis.com/ajax/libs/extended-component-library/0.6.11/index.min.js"></script>
+<!-- Leaflet + Esri / USGS topo basemaps (no API key required) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@300;500;700;900&display=swap');
 :root{
@@ -105,24 +105,15 @@ input:checked+.slider:before{transform:translateX(14px);background:var(--green);
 .ctabs{display:flex;gap:0;margin-bottom:8px;border-bottom:1px solid var(--border);}
 .ctab{font-size:8px;letter-spacing:1px;text-transform:uppercase;padding:4px 10px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;transition:all .12s;}
 .ctab.active{color:var(--accent2);border-bottom-color:var(--accent2);}
-/* gmpx place-picker dark theme overrides */
-gmpx-place-picker{
-  --gmpx-color-surface:#0a0c0f;
-  --gmpx-color-on-surface:var(--text);
-  --gmpx-color-on-surface-variant:var(--dim);
-  --gmpx-color-primary:var(--accent);
-  --gmpx-color-outline:var(--border);
-  --gmpx-font-family-base:'Space Mono',monospace;
-  --gmpx-font-size-base:10px;
-  width:100%;
-}
-/* InfoWindow dark override */
-.gm-style .gm-style-iw-c{background:var(--panel)!important;color:var(--text)!important;border:1px solid var(--border)!important;box-shadow:0 2px 12px rgba(0,0,0,.6)!important;}
-.gm-style .gm-style-iw-d{overflow:hidden!important;}
-.gm-style .gm-style-iw-t::after{background:var(--panel)!important;}
-.gm-style-iw strong{color:var(--accent);}
-.gm-style-iw span{color:var(--dim);font-size:9px;}
-.gm-ui-hover-effect>span{background:var(--dim)!important;}
+/* Leaflet map + search */
+#gmap{background:#0a0c0f;}
+.leaflet-container{font-family:'Space Mono',monospace;cursor:crosshair;}
+.leaflet-control-layers,.leaflet-bar a{background:var(--panel)!important;color:var(--text)!important;border-color:var(--border)!important;}
+.leaflet-control-layers{border:1px solid var(--border);font-size:10px;}
+.leaflet-control-attribution{background:rgba(10,12,15,.8)!important;color:var(--dim)!important;font-size:8px;}
+.leaflet-control-attribution a{color:var(--accent2)!important;}
+#mapSearch{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:10px;padding:5px 8px;width:100%;box-sizing:border-box;}
+#mapSearch:focus{outline:none;border-color:var(--accent);}
 .pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-bottom:12px;}
 .pkc{background:var(--panel);border:1px solid var(--border);padding:10px;}
 .pkt{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--dim);margin-bottom:2px;}
@@ -147,7 +138,7 @@ gmpx-place-picker{
     <div class="stitle">Lot Polygon</div>
     <div style="display:flex;gap:4px;margin-bottom:5px;flex-wrap:wrap;">
       <button class="btn2" onclick="setMode('xy')" id="mxy" style="border-color:var(--accent);color:var(--accent)">Local X,Y (m)</button>
-      <button class="btn2" onclick="setMode('ll')" id="mll">Lat,Lon (Google)</button>
+      <button class="btn2" onclick="setMode('ll')" id="mll">Lat,Lon</button>
       <button class="btn2" onclick="switchTab('map')" style="margin-left:auto">📍 Pick on Map</button>
       <button class="btn2" onclick="document.getElementById('geojsonFileInput').click()" style="border-color:var(--green);color:var(--green)">📂 Import GeoJSON</button>
       <input type="file" id="geojsonFileInput" accept=".geojson,.json" style="display:none" onchange="importGeoJSON(event)">
@@ -295,7 +286,7 @@ gmpx-place-picker{
     <div class="tab" onclick="switchTab('parking')">Parking</div>
     <div class="tab" onclick="switchTab('compliance')">Compliance</div>
     <div class="tab" onclick="switchTab('geodata')">📄 GeoData</div>
-    <div class="tab" onclick="switchTab('map')">📍 Google Maps</div>
+    <div class="tab" onclick="switchTab('map')">📍 Site Map</div>
   </div>
   <div class="tc">
     <div id="pane-plan2d" class="tp active">
@@ -330,7 +321,7 @@ gmpx-place-picker{
     <div id="pane-map" class="tp">
       <div class="map-toolbar">
         <div style="flex-shrink:0">
-          <div style="font-size:9px;color:var(--accent);font-weight:700;letter-spacing:1px;margin-bottom:2px;">📍 GOOGLE MAPS SITE PICKER</div>
+          <div style="font-size:9px;color:var(--accent);font-weight:700;letter-spacing:1px;margin-bottom:2px;">📍 TOPO SITE PICKER</div>
           <div class="map-hint">Click map to place lot vertices · Right-click to undo last · Double-click to finish</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;margin-left:10px;flex-shrink:0">
@@ -339,7 +330,7 @@ gmpx-place-picker{
           <button class="btn3" onclick="useMapCoords()">✓ Use Coords</button>
         </div>
         <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px;margin-left:10px;">
-          <gmpx-place-picker id="placePicker" placeholder="Search address or place…"></gmpx-place-picker>
+          <input id="mapSearch" type="text" placeholder="Search address or place… (Enter)" onkeydown="if(event.key==='Enter')searchMap()">
           <div style="font-size:8px;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-top:2px">Picked vertices (Lat, Lon):</div>
           <div id="mapCoordsDisplay" class="map-coords-display">No points yet. Click map to start.</div>
         </div>
@@ -352,25 +343,6 @@ gmpx-place-picker{
       </div>
       <div id="gmap-container" style="flex:1;position:relative;">
         <div id="gmap" style="width:100%;height:100%;"></div>
-        <!-- Search result marker (used by gmpx-place-picker via init()) -->
-        <gmp-advanced-marker id="searchResultMarker" style="display:none;"></gmp-advanced-marker>
-        <div id="gmap-placeholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;background:var(--bg);position:absolute;top:0;left:0;">
-          <div style="font-size:32px">🗺️</div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;letter-spacing:3px;color:var(--accent)">GOOGLE MAPS SITE PICKER</div>
-          <div style="font-size:10px;color:var(--dim);text-align:center;max-width:400px;line-height:1.8;">
-            Click the button below to load Google Maps.<br>
-            Then <strong style="color:var(--text)">click on the map</strong> to trace your lot boundary.<br>
-            Right-click or use Undo to remove the last point.<br>
-            When done, click <strong style="color:var(--accent)">✓ Use Coords</strong>.
-          </div>
-          <button class="btn" style="width:200px;margin-top:8px" onclick="initGoogleMap()">Load Google Maps</button>
-          <div id="apiKeyWarning" style="font-size:9px;color:var(--amber);text-align:center;max-width:380px;line-height:1.6;margin-top:8px;background:#1a1200;border:1px solid #3a3000;padding:8px;">
-            ⚠️ <strong>API Key required.</strong> Open this file in a text editor and replace <code style="color:var(--red)">YOUR_API_KEY</code> at <code style="color:var(--accent)">GMAPS_API_KEY</code> in the script with your own key from <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent2)">Google Cloud Console</a>. Enable the <em>Maps JavaScript API</em> and <em>Places API</em>.
-          </div>
-          <div style="font-size:9px;color:var(--dim);text-align:center;max-width:380px;line-height:1.6;margin-top:4px;">
-            💡 <strong style="color:var(--amber)">Alternative:</strong> In Google Maps, right-click any corner of your lot → copy the coordinates shown → paste into the left panel using <em>Lat,Lon (Google)</em> mode.
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -389,7 +361,7 @@ let cam={rotX:32,rotY:-42,zoom:1.8,dragging:false,lastX:0,lastY:0};
 let mapInstance=null;
 let mapMarkers=[];
 let mapPts=[];
-let mapLine=null;
+let mapLayer=null;
 
 // ═══════════════════════════════════════════════════════════════
 // PRESETS
@@ -412,7 +384,7 @@ function setMode(m){
   document.getElementById('mll').style.cssText=m==='ll'?'border-color:var(--accent);color:var(--accent)':'';
   document.getElementById('coordHint').textContent=m==='xy'?
     'One vertex per line: X,Y (meters). Min 3 pts.':
-    'One vertex per line: Lat,Lon (from Google Maps). Will auto-convert to meters.';
+    'One vertex per line: Lat,Lon (decimal degrees). Will auto-convert to meters.';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1436,7 +1408,7 @@ function switchTab(id){
   document.getElementById('pane-'+id).classList.add('active');
   if(id==='plan2d')draw2D();
   if(id==='view3d')draw3D();
-  if(id==='map'&&!mapInstance)initGoogleMap();
+  if(id==='map')initMap();
 }
 
 function sd(e){cam.dragging=true;cam.lastX=e.clientX;cam.lastY=e.clientY;}
@@ -1515,46 +1487,68 @@ function exportDXF(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// GOOGLE MAPS SITE PICKER
+// TOPO SITE PICKER  (Leaflet + Esri World Topo / USGS Topo / Esri Imagery)
 // ═══════════════════════════════════════════════════════════════
-const GMAPS_API_KEY='YOUR_API_KEY'; // <-- paste your Google Maps key here
-let _gmapLoading=false;
-function initGoogleMap(){
-  if(mapInstance){return;}
-  if(window.google&&google.maps&&google.maps.Map){_gmapReady();return;}
-  if(_gmapLoading)return;
-  if(GMAPS_API_KEY==='YOUR_API_KEY'){
-    document.getElementById('apiKeyWarning').style.border='1px solid var(--red)';
-    return;
-  }
-  _gmapLoading=true;
-  window._gmapReady=_gmapReady;
-  const sc=document.createElement('script');
-  sc.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(GMAPS_API_KEY)+'&libraries=places,marker&callback=_gmapReady&loading=async';
-  sc.onerror=()=>{_gmapLoading=false;alert('Failed to load Google Maps. Check your API key and network.');};
-  document.head.appendChild(sc);
+function initMap(){
+  if(mapInstance){setTimeout(()=>mapInstance.invalidateSize(),50);return;}
+  const esriTopo=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:21,maxNativeZoom:19,attribution:'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, USGS, NGA, FAO, NPS, and others'});
+  const usgsTopo=L.tileLayer('https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:21,maxNativeZoom:16,attribution:'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a> (US coverage only)'});
+  const esriImg=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:21,maxNativeZoom:19,attribution:'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'});
+  const otm=L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    {maxZoom:21,maxNativeZoom:17,subdomains:'abc',attribution:'Map data &copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Style &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'});
+  const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:21,maxNativeZoom:19,attribution:'&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors'});
+  const gsiAttr='<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">GSI Japan (国土地理院)</a>';
+  const gsiStd=L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+    {maxZoom:21,maxNativeZoom:18,attribution:gsiAttr});
+  const gsiEn=L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/english/{z}/{x}/{y}.png',
+    {maxZoom:21,maxNativeZoom:11,attribution:gsiAttr});
+  const gsiPhoto=L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+    {maxZoom:21,maxNativeZoom:18,attribution:gsiAttr});
+  const bkgTop=L.tileLayer('https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web/default/WEBMERCATOR/{z}/{y}/{x}.png',
+    {maxZoom:21,maxNativeZoom:18,attribution:'&copy; <a href="https://www.bkg.bund.de" target="_blank">BKG</a> (<a href="https://www.govdata.de/dl-de/by-2-0" target="_blank">dl-de/by-2-0</a>) &middot; <a href="https://sgx.geodatenzentrum.de/web_public/gdz/datenquellen/datenquellen_topplusopen.html" target="_blank">Datenquellen</a>'});
+  const bkgGrau=L.tileLayer('https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web_grau/default/WEBMERCATOR/{z}/{y}/{x}.png',
+    {maxZoom:21,maxNativeZoom:18,attribution:'&copy; <a href="https://www.bkg.bund.de" target="_blank">BKG</a> (<a href="https://www.govdata.de/dl-de/by-2-0" target="_blank">dl-de/by-2-0</a>)'});
+  mapInstance=L.map('gmap',{center:[14.5790,121.0465],zoom:17,layers:[esriTopo],doubleClickZoom:false});
+  L.control.layers({
+    'Esri World Topo (Global)':esriTopo,
+    'Esri Imagery (Global)':esriImg,
+    'OpenTopoMap (Global, contours)':otm,
+    'OpenStreetMap (Global)':osm,
+    'USGS Topo (US only)':usgsTopo,
+    '🇯🇵 Japan GSI Standard':gsiStd,
+    '🇯🇵 Japan GSI English':gsiEn,
+    '🇯🇵 Japan GSI Aerial':gsiPhoto,
+    '🇩🇪 Germany TopPlusOpen':bkgTop,
+    '🇩🇪 Germany TopPlusOpen (Gray)':bkgGrau
+  },null,{position:'topright',collapsed:true}).addTo(mapInstance);
+  L.control.scale({imperial:false}).addTo(mapInstance);
+  mapLayer=L.layerGroup().addTo(mapInstance);
+  mapInstance.on('click',e=>{mapPts.push([e.latlng.lat,e.latlng.lng]);redrawMapPts();});
+  // double-click = finish: its 2nd click added a duplicate vertex, drop it
+  mapInstance.on('dblclick',()=>{mapPts.pop();redrawMapPts();});
+  mapInstance.on('contextmenu',()=>undoLastPt());
+  setTimeout(()=>mapInstance.invalidateSize(),50);
 }
-function _gmapReady(){
-  _gmapLoading=false;
-  document.getElementById('gmap-placeholder').style.display='none';
-  mapInstance=new google.maps.Map(document.getElementById('gmap'),{
-    center:{lat:14.5790,lng:121.0465},zoom:18,mapTypeId:'satellite',disableDoubleClickZoom:true,streetViewControl:false});
-  mapInstance.addListener('click',e=>{mapPts.push([e.latLng.lat(),e.latLng.lng()]);redrawMapPts();});
-  mapInstance.addListener('rightclick',()=>undoLastPt());
-  const pp=document.getElementById('placePicker');
-  if(pp) pp.addEventListener('gmpx-placechange',()=>{
-    const p=pp.value; if(!p||!p.location)return;
-    if(p.viewport) mapInstance.fitBounds(p.viewport); else {mapInstance.setCenter(p.location);mapInstance.setZoom(19);}
-  });
+async function searchMap(){
+  const q=document.getElementById('mapSearch').value.trim();
+  if(!q||!mapInstance)return;
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));
+    const d=await r.json();
+    if(!d.length){alert('No results for "'+q+'".');return;}
+    const bb=d[0].boundingbox; // [south, north, west, east]
+    mapInstance.fitBounds([[+bb[0],+bb[2]],[+bb[1],+bb[3]]],{maxZoom:19});
+  }catch(e){alert('Search failed. Check your network connection.');}
 }
 function redrawMapPts(){
   if(!mapInstance)return;
-  mapMarkers.forEach(m=>m.setMap(null)); mapMarkers=[];
-  if(mapLine){mapLine.setMap(null);mapLine=null;}
-  const path=mapPts.map(p=>({lat:p[0],lng:p[1]}));
-  path.forEach(p=>mapMarkers.push(new google.maps.Marker({position:p,map:mapInstance,
-    icon:{path:google.maps.SymbolPath.CIRCLE,scale:5,fillColor:'#3dff9a',fillOpacity:1,strokeColor:'#000',strokeWeight:1}})));
-  if(path.length>1) mapLine=new google.maps.Polygon({paths:path,map:mapInstance,strokeColor:'#e8ff47',strokeWeight:2,fillColor:'#e8ff47',fillOpacity:0.12});
+  mapLayer.clearLayers();
+  if(mapPts.length>1) L.polygon(mapPts,{color:'#e8ff47',weight:2,fillColor:'#e8ff47',fillOpacity:0.12,interactive:false}).addTo(mapLayer);
+  mapPts.forEach(p=>L.circleMarker(p,{radius:5,color:'#000',weight:1,fillColor:'#3dff9a',fillOpacity:1,interactive:false}).addTo(mapLayer));
   document.getElementById('mapCoordsDisplay').textContent=mapPts.length?mapPts.map(p=>p[0].toFixed(6)+','+p[1].toFixed(6)).join('\n'):'No points yet. Click map to start.';
   document.getElementById('ptCount').textContent=mapPts.length+' point'+(mapPts.length===1?'':'s');
 }
@@ -1571,11 +1565,6 @@ function useMapCoords(){
 // ═══════════════════════════════════════════════════════════════
 document.getElementById('coordInput').value=PRESETS.rect;
 runSim();
-
-// Extended Component Library init — fires after DOM is ready.
-// If the map tab has already been opened and _gmapReady() has run,
-// initPlacePicker() will be called directly from there. This listener
-// ensures it also runs if the ECL script finishes loading after that.
 
 </script>
 </body>
